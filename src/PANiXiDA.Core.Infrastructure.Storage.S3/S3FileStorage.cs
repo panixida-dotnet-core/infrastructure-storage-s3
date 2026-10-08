@@ -19,6 +19,8 @@ internal sealed class S3FileStorage(
     IOptions<S3StorageOptions> options,
     TimeProvider timeProvider) : IFileStorage
 {
+    private const string NoSuchBucketErrorCode = "NoSuchBucket";
+
     private readonly S3StorageOptions _options = options.Value;
 
     public Task UploadAsync(
@@ -53,7 +55,7 @@ internal sealed class S3FileStorage(
             return await OpenDownloadStreamAsync(key, cancellationToken);
         }
         catch (AmazonS3Exception exception) when (
-            exception.StatusCode == HttpStatusCode.NotFound && exception.ErrorCode != "NoSuchBucket")
+            exception.StatusCode == HttpStatusCode.NotFound && exception.ErrorCode != NoSuchBucketErrorCode)
         {
             throw new FileNotFoundException("The file does not exist in storage.", key, exception);
         }
