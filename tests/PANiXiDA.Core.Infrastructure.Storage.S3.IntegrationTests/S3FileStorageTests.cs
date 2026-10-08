@@ -64,7 +64,7 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
         replacement.CanRead.ShouldBeTrue();
     }
 
-    [Fact(DisplayName = "Multipart upload and range download preserve a large file")]
+    [Fact(DisplayName = "Multipart upload and streaming download preserve a large file")]
     public async Task LargeFile()
     {
         var bytes = RandomNumberGenerator.GetBytes((20 * 1024 * 1024) + 1);

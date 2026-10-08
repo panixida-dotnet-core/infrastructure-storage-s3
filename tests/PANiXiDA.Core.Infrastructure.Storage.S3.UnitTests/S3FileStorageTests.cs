@@ -36,20 +36,19 @@ public sealed class S3FileStorageTests
         content.Position.ShouldBe(7);
     }
 
-    [Fact(DisplayName = "Download returns the SDK stream with bounded range download buffering")]
+    [Fact(DisplayName = "Download returns the SDK response stream without buffering the file")]
     public async Task Download()
     {
         var storage = CreateStorage();
         await using var content = new MemoryStream("content"u8.ToArray());
-        _transfer.OpenStreamWithResponseAsync(Arg.Any<TransferUtilityOpenStreamRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new TransferUtilityOpenStreamResponse { ResponseStream = content });
+        _client.GetObjectAsync(Arg.Any<GetObjectRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new GetObjectResponse { ResponseStream = content });
 
         var result = await storage.DownloadAsync("file.txt", TestContext.Current.CancellationToken);
 
         result.ShouldBeSameAs(content);
-        await _transfer.Received(1).OpenStreamWithResponseAsync(Arg.Is<TransferUtilityOpenStreamRequest>(request =>
-            request.BucketName == "files" && request.Key == "development/file.txt" &&
-            request.MultipartDownloadType == MultipartDownloadType.RANGE && request.MaxInMemoryParts == 4),
+        await _client.Received(1).GetObjectAsync(Arg.Is<GetObjectRequest>(request =>
+            request.BucketName == "files" && request.Key == "development/file.txt"),
             TestContext.Current.CancellationToken);
     }
 
@@ -63,8 +62,8 @@ public sealed class S3FileStorageTests
     {
         var storage = CreateStorage();
         var failure = new AmazonS3Exception("Storage failure") { StatusCode = status, ErrorCode = code };
-        _transfer.OpenStreamWithResponseAsync(Arg.Any<TransferUtilityOpenStreamRequest>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromException<TransferUtilityOpenStreamResponse>(failure));
+        _client.GetObjectAsync(Arg.Any<GetObjectRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<GetObjectResponse>(failure));
 
         Task Action() => storage.DownloadAsync("file.txt", TestContext.Current.CancellationToken);
 

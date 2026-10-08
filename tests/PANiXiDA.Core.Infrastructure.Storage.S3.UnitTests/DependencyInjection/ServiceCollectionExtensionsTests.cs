@@ -24,7 +24,6 @@ public sealed class ServiceCollectionExtensionsTests
             ["S3Storage:KeyPrefix"] = "development",
             ["S3Storage:AccessKey"] = "test-access",
             ["S3Storage:SecretKey"] = "test-secret",
-            ["S3Storage:MaxInMemoryDownloadParts"] = "2",
             ["S3Storage:PresignedUrlLifetime"] = "00:05:00"
         }).Build();
         var services = new ServiceCollection();
@@ -42,7 +41,6 @@ public sealed class ServiceCollectionExtensionsTests
         provider.GetRequiredService<TimeProvider>().ShouldBeSameAs(TimeProvider.System);
         var options = provider.GetRequiredService<IOptions<S3StorageOptions>>().Value;
         options.KeyPrefix.ShouldBe("development");
-        options.MaxInMemoryDownloadParts.ShouldBe(2);
         options.PresignedUrlLifetime.ShouldBe(TimeSpan.FromMinutes(5));
         var awsOptions = provider.GetRequiredService<AWSOptions>();
         var credentials = await awsOptions.Credentials.GetCredentialsAsync();

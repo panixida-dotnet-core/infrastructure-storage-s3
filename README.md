@@ -14,7 +14,7 @@ Supports Amazon S3 and compatible providers, including custom endpoints.
 ## Features
 
 - Stream upload, download, and idempotent deletion.
-- Multipart uploads and range downloads through the AWS SDK TransferUtility.
+- Multipart uploads through the AWS SDK TransferUtility and streaming downloads.
 - Presigned PUT and GET URLs with configurable expiration.
 - Optional key prefix for separating environments in one bucket.
 - Configuration binding, startup validation, and dependency injection.
@@ -37,8 +37,7 @@ Configure an existing bucket and the AWS SDK endpoint in `appsettings.json`:
   "S3Storage": {
     "BucketName": "files",
     "KeyPrefix": "development",
-    "PresignedUrlLifetime": "00:15:00",
-    "MaxInMemoryDownloadParts": 4
+    "PresignedUrlLifetime": "00:15:00"
   }
 }
 ```

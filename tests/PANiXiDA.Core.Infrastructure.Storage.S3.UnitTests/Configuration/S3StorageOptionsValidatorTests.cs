@@ -16,7 +16,6 @@ public sealed class S3StorageOptionsValidatorTests
 
         _validator.Validate(null, options).Succeeded.ShouldBeTrue();
         options.PresignedUrlLifetime.ShouldBe(TimeSpan.FromMinutes(15));
-        options.MaxInMemoryDownloadParts.ShouldBe(4);
     }
 
     [Theory(DisplayName = "A bucket name is required")]
@@ -58,16 +57,6 @@ public sealed class S3StorageOptionsValidatorTests
         var options = new S3StorageOptions { BucketName = "files", AccessKey = accessKey, SecretKey = secretKey };
 
         _validator.Validate(null, options).Succeeded.ShouldBe(valid);
-    }
-
-    [Theory(DisplayName = "Download buffering requires a positive part count")]
-    [InlineData(0)]
-    [InlineData(-1)]
-    public void InvalidPartCount(int parts)
-    {
-        var options = new S3StorageOptions { BucketName = "files", MaxInMemoryDownloadParts = parts };
-
-        _validator.Validate(null, options).Failed.ShouldBeTrue();
     }
 
     [Theory(DisplayName = "Signed URL lifetime is limited to seven days")]

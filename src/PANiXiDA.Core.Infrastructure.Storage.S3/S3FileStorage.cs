@@ -51,12 +51,10 @@ internal sealed class S3FileStorage(
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            var response = await transferUtility.OpenStreamWithResponseAsync(new TransferUtilityOpenStreamRequest
+            var response = await transferUtility.S3Client.GetObjectAsync(new GetObjectRequest
             {
                 BucketName = _options.BucketName,
-                Key = objectKey,
-                MultipartDownloadType = MultipartDownloadType.RANGE,
-                MaxInMemoryParts = _options.MaxInMemoryDownloadParts
+                Key = objectKey
             }, cancellationToken);
 
             return response.ResponseStream;
