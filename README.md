@@ -168,6 +168,17 @@ Browser clients also require a suitable bucket CORS policy.
 
 ## Development
 
+### Native AOT
+
+The library declares `IsAotCompatible` and enables AOT and trimming analyzers.
+Configuration binding is generated at compile time with
+`EnableConfigurationBindingGenerator`; options use setters for generated binding.
+The adapter contains no explicit runtime reflection or dynamic code generation.
+AWS SDK and dependency injection internals may use AOT-compatible reflection.
+
+Consumers should also check AOT publication of their application and any
+additional credential providers.
+
 ### Build
 
 ```bash
