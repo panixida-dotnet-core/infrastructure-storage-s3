@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Mime;
+using Amazon.Runtime;
+using Amazon.Runtime.Endpoints;
 using Amazon.Runtime.Internal.Util;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -16,8 +18,7 @@ namespace PANiXiDA.Core.Infrastructure.Storage.S3;
 
 internal sealed class S3FileStorage(
     ITransferUtility transferUtility,
-    IOptions<S3StorageOptions> options,
-    TimeProvider timeProvider) : IFileStorage
+    IOptions<S3StorageOptions> options) : IFileStorage
 {
     private const string NoSuchBucketErrorCode = "NoSuchBucket";
 
@@ -81,17 +82,17 @@ internal sealed class S3FileStorage(
         ValidateContentType(contentType);
         ArgumentOutOfRangeException.ThrowIfNegative(size);
         cancellationToken.ThrowIfCancellationRequested();
-        var expiresAt = timeProvider.GetUtcNow().Add(_options.PresignedUrlLifetime);
         var request = new GetPreSignedUrlRequest
         {
             BucketName = _options.BucketName,
             Key = BuildObjectKey(key),
             Verb = HttpVerb.PUT,
-            Expires = expiresAt.UtcDateTime,
             Protocol = GetPresignedUrlProtocol(),
             ContentType = contentType
         };
         request.Headers.ContentLength = size;
+        var expiresAt = GetPresignedUrlExpiration(request);
+        request.Expires = expiresAt.UtcDateTime;
 
         var url = await transferUtility.S3Client.GetPreSignedURLAsync(request).WaitAsync(cancellationToken);
         var headers = new ReadOnlyDictionary<string, string>(new Dictionary<string, string>
@@ -111,14 +112,12 @@ internal sealed class S3FileStorage(
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
         ValidateContentType(contentType);
         cancellationToken.ThrowIfCancellationRequested();
-        var expiresAt = timeProvider.GetUtcNow().Add(_options.PresignedUrlLifetime);
         var disposition = new ContentDispositionHeaderValue(DispositionTypeNames.Attachment) { FileNameStar = fileName };
         var request = new GetPreSignedUrlRequest
         {
             BucketName = _options.BucketName,
             Key = BuildObjectKey(key),
             Verb = HttpVerb.GET,
-            Expires = expiresAt.UtcDateTime,
             Protocol = GetPresignedUrlProtocol(),
             ResponseHeaderOverrides = new ResponseHeaderOverrides
             {
@@ -126,6 +125,8 @@ internal sealed class S3FileStorage(
                 ContentDisposition = disposition.ToString()
             }
         };
+        var expiresAt = GetPresignedUrlExpiration(request);
+        request.Expires = expiresAt.UtcDateTime;
 
         var url = await transferUtility.S3Client.GetPreSignedURLAsync(request).WaitAsync(cancellationToken);
 
@@ -176,6 +177,13 @@ internal sealed class S3FileStorage(
         {
             throw new ArgumentException("A valid content type is required.", nameof(contentType));
         }
+    }
+
+    private DateTimeOffset GetPresignedUrlExpiration(GetPreSignedUrlRequest request)
+    {
+        var endpoint = transferUtility.S3Client.Config.DetermineServiceOperationEndpoint(
+            new ServiceOperationEndpointParameters(request));
+        return CorrectClockSkew.GetCorrectedUtcNowForEndpoint(endpoint.URL).Add(_options.PresignedUrlLifetime);
     }
 
     private Protocol GetPresignedUrlProtocol()

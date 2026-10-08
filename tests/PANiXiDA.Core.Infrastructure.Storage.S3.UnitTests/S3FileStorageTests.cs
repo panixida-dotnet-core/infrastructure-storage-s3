@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using Amazon;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.S3.Transfer;
@@ -11,7 +12,6 @@ namespace PANiXiDA.Core.Infrastructure.Storage.S3.UnitTests;
 
 public sealed class S3FileStorageTests
 {
-    private static readonly DateTimeOffset CurrentTime = new(2026, 10, 8, 12, 0, 0, TimeSpan.Zero);
     private readonly IAmazonS3 _client = Substitute.For<IAmazonS3>();
     private readonly ITransferUtility _transfer = Substitute.For<ITransferUtility>();
 
@@ -52,7 +52,7 @@ public sealed class S3FileStorageTests
             KeyPrefix = "development",
             DownloadPartSizeBytes = partSize,
             MaxInMemoryDownloadParts = bufferedParts
-        }), new FixedTimeProvider());
+        }));
         await using var content = new MemoryStream("content"u8.ToArray());
         _transfer.OpenStreamWithResponseAsync(Arg.Any<TransferUtilityOpenStreamRequest>(), Arg.Any<CancellationToken>())
             .Returns(new TransferUtilityOpenStreamResponse { ResponseStream = content });
@@ -161,9 +161,17 @@ public sealed class S3FileStorageTests
     [InlineData(null, true, Protocol.HTTP, 42)]
     public async Task PresignedUpload(string? endpoint, bool useHttp, Protocol protocol, long size)
     {
-        var storage = CreateStorage(config: new AmazonS3Config { ServiceURL = endpoint, UseHttp = useHttp });
+        var config = new AmazonS3Config { RegionEndpoint = RegionEndpoint.USEast1, UseHttp = useHttp };
+        if (endpoint is not null)
+        {
+            config.ServiceURL = endpoint;
+            config.AuthenticationRegion = "us-east-1";
+        }
+
+        var storage = CreateStorage(config: config);
         GetPreSignedUrlRequest? captured = null;
         _client.GetPreSignedURLAsync(Arg.Do<GetPreSignedUrlRequest>(request => captured = request)).Returns("https://signed.example/upload");
+        var before = DateTimeOffset.UtcNow;
 
         var result = await storage.GetPresignedUploadUrlAsync("file.txt", "text/plain", size, TestContext.Current.CancellationToken);
 
@@ -174,9 +182,9 @@ public sealed class S3FileStorageTests
         captured.ContentType.ShouldBe("text/plain");
         captured.Headers.ContentLength.ShouldBe(size);
         captured.Protocol.ShouldBe(protocol);
-        captured.Expires.ShouldBe(CurrentTime.AddMinutes(15).UtcDateTime);
+        captured.Expires.ShouldBe(result.ExpiresAt.UtcDateTime);
         result.Url.ShouldBe("https://signed.example/upload");
-        result.ExpiresAt.ShouldBe(CurrentTime.AddMinutes(15));
+        result.ExpiresAt.ShouldBeInRange(before.AddMinutes(15), DateTimeOffset.UtcNow.AddMinutes(15));
         result.RequiredHeaders.ShouldHaveSingleItem().ShouldBe(new KeyValuePair<string, string>("Content-Type", "text/plain"));
     }
 
@@ -187,6 +195,7 @@ public sealed class S3FileStorageTests
         GetPreSignedUrlRequest? captured = null;
         _client.GetPreSignedURLAsync(Arg.Do<GetPreSignedUrlRequest>(request => captured = request)).Returns("https://signed.example/download");
         const string fileName = "отчёт \"финальный\".txt";
+        var before = DateTimeOffset.UtcNow;
 
         var result = await storage.GetPresignedDownloadUrlAsync("file.txt", fileName, "text/plain", TestContext.Current.CancellationToken);
 
@@ -198,9 +207,9 @@ public sealed class S3FileStorageTests
         var disposition = ContentDispositionHeaderValue.Parse(captured.ResponseHeaderOverrides.ContentDisposition);
         disposition.DispositionType.ShouldBe("attachment");
         disposition.FileNameStar.ShouldBe(fileName);
-        captured.Expires.ShouldBe(CurrentTime.AddMinutes(15).UtcDateTime);
+        captured.Expires.ShouldBe(result.ExpiresAt.UtcDateTime);
         result.Url.ShouldBe("https://signed.example/download");
-        result.ExpiresAt.ShouldBe(CurrentTime.AddMinutes(15));
+        result.ExpiresAt.ShouldBeInRange(before.AddMinutes(15), DateTimeOffset.UtcNow.AddMinutes(15));
     }
 
     [Theory(DisplayName = "All operations reject invalid or escaping object keys")]
@@ -300,17 +309,12 @@ public sealed class S3FileStorageTests
 
     private S3FileStorage CreateStorage(string prefix = "development", AmazonS3Config? config = null)
     {
-        _client.Config.Returns(config ?? new AmazonS3Config());
+        _client.Config.Returns(config ?? new AmazonS3Config { RegionEndpoint = RegionEndpoint.USEast1 });
         _transfer.S3Client.Returns(_client);
         return new S3FileStorage(_transfer, Options.Create(new S3StorageOptions
         {
             BucketName = "files",
             KeyPrefix = prefix
-        }), new FixedTimeProvider());
-    }
-
-    private sealed class FixedTimeProvider : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => CurrentTime;
+        }));
     }
 }

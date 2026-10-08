@@ -261,6 +261,8 @@ normally sets content length from the upload body. `GetPresignedDownloadUrlAsync
 signs an HTTP GET with the suggested file name and response content type; no extra
 request headers are needed. Use URLs unchanged. Credentials can expire or be revoked
 before the configured URL expiration.
+Expiration uses the AWS SDK's corrected clock for the resolved endpoint;
+an application-registered `TimeProvider` does not affect signed URLs.
 
 URL generation does not transfer content or check whether the object exists.
 

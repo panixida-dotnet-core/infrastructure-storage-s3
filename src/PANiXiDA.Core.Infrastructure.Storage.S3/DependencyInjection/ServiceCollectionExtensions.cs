@@ -3,7 +3,6 @@ using Amazon.S3;
 using Amazon.S3.Transfer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using PANiXiDA.Core.Application.Storage;
 using PANiXiDA.Core.Infrastructure.Storage.S3.Configuration;
@@ -43,7 +42,6 @@ public static class ServiceCollectionExtensions
         services.AddAWSService<IAmazonS3>();
         services.AddSingleton<ITransferUtility>(provider =>
             new TransferUtility(provider.GetRequiredService<IAmazonS3>()));
-        services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<IFileStorage, S3FileStorage>();
 
         return services;
