@@ -4,10 +4,18 @@
         <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
     </PropertyGroup>
     <ItemGroup>
-        <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.0.4" />
-        <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="1.8.1" />
-        <PackageVersion Include="Nerdbank.GitVersioning" Version="3.9.50" />
-        <PackageVersion Include="xunit.v3" Version="3.2.2" />
+        <PackageVersion Include="AWSSDK.Extensions.NETCore.Setup" Version="4.0.102.1" />
+        <PackageVersion Include="AWSSDK.S3" Version="4.0.104.1" />
+        <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
+        <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+        <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.12" />
+        <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />
+        <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.5.1" />
+        <PackageVersion Include="Nerdbank.GitVersioning" Version="3.10.94" />
+        <PackageVersion Include="NSubstitute" Version="6.2.0" />
+        <PackageVersion Include="PANiXiDA.Core.Application" Version="4.2.1" />
+        <PackageVersion Include="Testcontainers" Version="4.15.0" />
+        <PackageVersion Include="xunit.v3" Version="4.0.1" />
         <PackageVersion Include="Shouldly" Version="4.3.0" />
     </ItemGroup>
 </Project>
