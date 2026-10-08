@@ -95,6 +95,20 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
         (await ReadTextAsync(other, "file.txt")).ShouldBe("production");
     }
 
+    [Fact(DisplayName = "Upload accepts a non-seekable network stream and leaves it open")]
+    public async Task UploadNetworkStream()
+    {
+        using var original = new MemoryStream("content"u8.ToArray());
+        await _storage.UploadAsync("source.txt", original, "text/plain", TestContext.Current.CancellationToken);
+        await using var source = await _storage.DownloadAsync("source.txt", TestContext.Current.CancellationToken);
+        source.CanSeek.ShouldBeFalse();
+
+        await _storage.UploadAsync("copy.txt", source, "text/plain", TestContext.Current.CancellationToken);
+
+        source.CanRead.ShouldBeTrue();
+        (await ReadTextAsync(_storage, "copy.txt")).ShouldBe("content");
+    }
+
     [Theory(DisplayName = "Signed PUT and GET work without SDK credentials in the HTTP client")]
     [InlineData("folder/file.txt", "content")]
     [InlineData("папка/файл + %23.txt", "данные")]
