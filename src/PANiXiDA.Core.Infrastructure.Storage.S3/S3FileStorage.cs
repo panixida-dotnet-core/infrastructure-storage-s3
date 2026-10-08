@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Net;
 using System.Net.Http.Headers;
+using Amazon.Runtime.Internal.Util;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.S3.Transfer;
@@ -32,11 +33,12 @@ internal sealed class S3FileStorage(
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        using var uploadStream = new NonDisposingWrapperStream(content);
         await transferUtility.UploadWithResponseAsync(new TransferUtilityUploadRequest
         {
             BucketName = _options.BucketName,
             Key = objectKey,
-            InputStream = content,
+            InputStream = uploadStream,
             ContentType = contentType,
             AutoCloseStream = false,
             AutoResetStreamPosition = false

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using Amazon.Runtime.Internal.Util;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.S3.Transfer;
@@ -24,13 +25,17 @@ public sealed class S3FileStorageTests
         using var content = new MemoryStream("prefix-content"u8.ToArray());
         content.Position = 7;
         _transfer.UploadWithResponseAsync(Arg.Any<TransferUtilityUploadRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new TransferUtilityUploadResponse());
+            .Returns(call =>
+            {
+                call.Arg<TransferUtilityUploadRequest>().InputStream.Dispose();
+                return new TransferUtilityUploadResponse();
+            });
 
         await storage.UploadAsync("folder/File.txt", content, "text/plain", TestContext.Current.CancellationToken);
 
         await _transfer.Received(1).UploadWithResponseAsync(Arg.Is<TransferUtilityUploadRequest>(request =>
             request.BucketName == "files" && request.Key == expectedKey &&
-            request.InputStream == content && request.ContentType == "text/plain" &&
+            ((NonDisposingWrapperStream)request.InputStream).BaseStream == content && request.ContentType == "text/plain" &&
             !request.AutoCloseStream && !request.AutoResetStreamPosition), TestContext.Current.CancellationToken);
         content.CanRead.ShouldBeTrue();
         content.Position.ShouldBe(7);
