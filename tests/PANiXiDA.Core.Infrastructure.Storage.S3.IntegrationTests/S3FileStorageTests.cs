@@ -91,6 +91,7 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
     [InlineData(16 * 1024 * 1024, true)]
     [InlineData((16 * 1024 * 1024) + 1, true)]
     [InlineData((20 * 1024 * 1024) + 1, true)]
+    [InlineData((48 * 1024 * 1024) + 1, true)]
     public async Task UploadStrategyAndDownloadIntegrity(int size, bool multipart)
     {
         var requests = new ConcurrentQueue<AmazonWebServiceRequest>();
@@ -132,6 +133,13 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
         await using var downloaded = await _storage.DownloadAsync("file.bin", TestContext.Current.CancellationToken);
         var hash = await SHA256.HashDataAsync(downloaded, TestContext.Current.CancellationToken);
         hash.ShouldBe(SHA256.HashData(bytes));
+        const int downloadPartSize = 8 * 1024 * 1024;
+        var downloads = requests.OfType<GetObjectRequest>().OrderBy(request => request.ByteRange.Start).ToArray();
+        var partCount = (size + downloadPartSize - 1) / downloadPartSize;
+        downloads.Length.ShouldBe(partCount);
+        downloads.Select(request => request.ByteRange.Start)
+            .ShouldBe(Enumerable.Range(0, partCount).Select(part => (long)part * downloadPartSize));
+        downloads.ShouldAllBe(request => request.PartNumber == null);
         var metadata = await _client.GetObjectMetadataAsync(SeaweedFsContainerFixture.BucketName,
             $"{_prefix}/file.bin", TestContext.Current.CancellationToken);
         metadata.Headers.ContentLength.ShouldBe(size);

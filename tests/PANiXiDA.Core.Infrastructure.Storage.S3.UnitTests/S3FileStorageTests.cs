@@ -40,11 +40,44 @@ public sealed class S3FileStorageTests
         content.Position.ShouldBe(7);
     }
 
-    [Fact(DisplayName = "Download returns the SDK response stream without buffering the file")]
-    public async Task Download()
+    [Theory(DisplayName = "Download returns the SDK stream with configured ranged buffering")]
+    [InlineData(8 * 1024 * 1024, 4)]
+    [InlineData(4 * 1024 * 1024, 2)]
+    public async Task Download(long partSize, int bufferedParts)
+    {
+        _transfer.S3Client.Returns(_client);
+        var storage = new S3FileStorage(_transfer, Options.Create(new S3StorageOptions
+        {
+            BucketName = "files",
+            KeyPrefix = "development",
+            DownloadPartSizeBytes = partSize,
+            MaxInMemoryDownloadParts = bufferedParts
+        }), new FixedTimeProvider());
+        await using var content = new MemoryStream("content"u8.ToArray());
+        _transfer.OpenStreamWithResponseAsync(Arg.Any<TransferUtilityOpenStreamRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new TransferUtilityOpenStreamResponse { ResponseStream = content });
+
+        var result = await storage.DownloadAsync("file.txt", TestContext.Current.CancellationToken);
+
+        result.ShouldBeSameAs(content);
+        await _transfer.Received(1).OpenStreamWithResponseAsync(Arg.Is<TransferUtilityOpenStreamRequest>(request =>
+            request.BucketName == "files" && request.Key == "development/file.txt" &&
+            request.MultipartDownloadType == MultipartDownloadType.RANGE &&
+            request.PartSize == partSize && request.MaxInMemoryParts == bufferedParts),
+            TestContext.Current.CancellationToken);
+        await _client.DidNotReceive().GetObjectAsync(Arg.Any<GetObjectRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory(DisplayName = "Rejected ranges fall back to one regular GET preserving the response stream")]
+    [InlineData(0)]
+    [InlineData(7)]
+    public async Task DownloadRangeFallback(int size)
     {
         var storage = CreateStorage();
-        await using var content = new MemoryStream("content"u8.ToArray());
+        await using var content = new MemoryStream(new byte[size]);
+        var failure = new AmazonS3Exception("Range not satisfiable") { StatusCode = HttpStatusCode.RequestedRangeNotSatisfiable };
+        _transfer.OpenStreamWithResponseAsync(Arg.Any<TransferUtilityOpenStreamRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<TransferUtilityOpenStreamResponse>(failure));
         _client.GetObjectAsync(Arg.Any<GetObjectRequest>(), Arg.Any<CancellationToken>())
             .Returns(new GetObjectResponse { ResponseStream = content });
 
@@ -52,20 +85,27 @@ public sealed class S3FileStorageTests
 
         result.ShouldBeSameAs(content);
         await _client.Received(1).GetObjectAsync(Arg.Is<GetObjectRequest>(request =>
-            request.BucketName == "files" && request.Key == "development/file.txt"),
-            TestContext.Current.CancellationToken);
+            request.BucketName == "files" && request.Key == "development/file.txt" &&
+            request.ByteRange == null && request.PartNumber == null), TestContext.Current.CancellationToken);
     }
 
     [Theory(DisplayName = "Missing objects become FileNotFoundException while storage failures propagate")]
-    [InlineData(HttpStatusCode.NotFound, "NoSuchKey", true)]
-    [InlineData(HttpStatusCode.NotFound, null, true)]
-    [InlineData(HttpStatusCode.NotFound, "NoSuchBucket", false)]
-    [InlineData(HttpStatusCode.Forbidden, "AccessDenied", false)]
-    [InlineData(HttpStatusCode.InternalServerError, "InternalError", false)]
-    public async Task DownloadFailure(HttpStatusCode status, string? code, bool missingFile)
+    [InlineData(HttpStatusCode.NotFound, "NoSuchKey", true, false)]
+    [InlineData(HttpStatusCode.NotFound, null, true, false)]
+    [InlineData(HttpStatusCode.NotFound, "NoSuchBucket", false, false)]
+    [InlineData(HttpStatusCode.Forbidden, "AccessDenied", false, false)]
+    [InlineData(HttpStatusCode.InternalServerError, "InternalError", false, false)]
+    [InlineData(HttpStatusCode.NotFound, "NoSuchKey", true, true)]
+    [InlineData(HttpStatusCode.Forbidden, "AccessDenied", false, true)]
+    public async Task DownloadFailure(HttpStatusCode status, string? code, bool missingFile, bool fallback)
     {
         var storage = CreateStorage();
         var failure = new AmazonS3Exception("Storage failure") { StatusCode = status, ErrorCode = code };
+        var transferFailure = fallback
+            ? new AmazonS3Exception("Range not satisfiable") { StatusCode = HttpStatusCode.RequestedRangeNotSatisfiable }
+            : failure;
+        _transfer.OpenStreamWithResponseAsync(Arg.Any<TransferUtilityOpenStreamRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<TransferUtilityOpenStreamResponse>(transferFailure));
         _client.GetObjectAsync(Arg.Any<GetObjectRequest>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromException<GetObjectResponse>(failure));
 

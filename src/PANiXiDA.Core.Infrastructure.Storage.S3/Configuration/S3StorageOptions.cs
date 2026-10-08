@@ -20,6 +20,12 @@ public sealed class S3StorageOptions
     /// <summary>Gets an optional secret key. Omit both keys to use the AWS credential chain.</summary>
     public string SecretKey { get; init; } = string.Empty;
 
+    /// <summary>Gets the size of each ranged download part in bytes.</summary>
+    public long DownloadPartSizeBytes { get; init; } = 8 * 1024 * 1024;
+
+    /// <summary>Gets the maximum number of download parts buffered in memory per stream.</summary>
+    public int MaxInMemoryDownloadParts { get; init; } = 4;
+
     /// <summary>Gets the signed URL lifetime, from more than zero to seven days.</summary>
     public TimeSpan PresignedUrlLifetime { get; init; } = TimeSpan.FromMinutes(15);
 }

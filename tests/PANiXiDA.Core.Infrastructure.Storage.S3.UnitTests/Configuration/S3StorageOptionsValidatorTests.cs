@@ -16,6 +16,8 @@ public sealed class S3StorageOptionsValidatorTests
 
         _validator.Validate(null, options).Succeeded.ShouldBeTrue();
         options.PresignedUrlLifetime.ShouldBe(TimeSpan.FromMinutes(15));
+        options.MaxInMemoryDownloadParts.ShouldBe(4);
+        options.DownloadPartSizeBytes.ShouldBe(8 * 1024 * 1024);
     }
 
     [Theory(DisplayName = "A bucket name is required")]
@@ -55,6 +57,30 @@ public sealed class S3StorageOptionsValidatorTests
     public void CredentialPair(string accessKey, string secretKey, bool valid)
     {
         var options = new S3StorageOptions { BucketName = "files", AccessKey = accessKey, SecretKey = secretKey };
+
+        _validator.Validate(null, options).Succeeded.ShouldBe(valid);
+    }
+
+    [Theory(DisplayName = "Ranged downloads require a positive part size")]
+    [InlineData(-1, false)]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    [InlineData(8 * 1024 * 1024, true)]
+    public void PartSize(long bytes, bool valid)
+    {
+        var options = new S3StorageOptions { BucketName = "files", DownloadPartSizeBytes = bytes };
+
+        _validator.Validate(null, options).Succeeded.ShouldBe(valid);
+    }
+
+    [Theory(DisplayName = "Download buffering requires a positive part count")]
+    [InlineData(-1, false)]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    [InlineData(4, true)]
+    public void PartCount(int parts, bool valid)
+    {
+        var options = new S3StorageOptions { BucketName = "files", MaxInMemoryDownloadParts = parts };
 
         _validator.Validate(null, options).Succeeded.ShouldBe(valid);
     }

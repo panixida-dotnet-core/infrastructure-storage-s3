@@ -26,6 +26,16 @@ internal sealed class S3StorageOptionsValidator : IValidateOptions<S3StorageOpti
             failures.Add($"'{nameof(S3StorageOptions.AccessKey)}' and '{nameof(S3StorageOptions.SecretKey)}' must both be configured.");
         }
 
+        if (options.DownloadPartSizeBytes <= 0)
+        {
+            failures.Add($"'{nameof(S3StorageOptions.DownloadPartSizeBytes)}' must be greater than zero.");
+        }
+
+        if (options.MaxInMemoryDownloadParts <= 0)
+        {
+            failures.Add($"'{nameof(S3StorageOptions.MaxInMemoryDownloadParts)}' must be greater than zero.");
+        }
+
         if (options.PresignedUrlLifetime <= TimeSpan.Zero || options.PresignedUrlLifetime > TimeSpan.FromDays(7))
         {
             failures.Add($"'{nameof(S3StorageOptions.PresignedUrlLifetime)}' must be greater than zero and at most seven days.");

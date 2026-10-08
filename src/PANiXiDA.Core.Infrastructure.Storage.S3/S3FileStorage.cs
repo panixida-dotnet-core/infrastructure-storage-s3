@@ -50,13 +50,7 @@ internal sealed class S3FileStorage(
     {
         try
         {
-            var response = await transferUtility.S3Client.GetObjectAsync(new GetObjectRequest
-            {
-                BucketName = _options.BucketName,
-                Key = BuildObjectKey(key)
-            }, cancellationToken);
-
-            return response.ResponseStream;
+            return await OpenDownloadStreamAsync(key, cancellationToken);
         }
         catch (AmazonS3Exception exception) when (
             exception.StatusCode == HttpStatusCode.NotFound && exception.ErrorCode != "NoSuchBucket")
@@ -134,6 +128,33 @@ internal sealed class S3FileStorage(
         var url = await transferUtility.S3Client.GetPreSignedURLAsync(request).WaitAsync(cancellationToken);
 
         return new PresignedDownloadUrl(url, expiresAt);
+    }
+
+    private async Task<Stream> OpenDownloadStreamAsync(string key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await transferUtility.OpenStreamWithResponseAsync(new TransferUtilityOpenStreamRequest
+            {
+                BucketName = _options.BucketName,
+                Key = BuildObjectKey(key),
+                MultipartDownloadType = MultipartDownloadType.RANGE,
+                PartSize = _options.DownloadPartSizeBytes,
+                MaxInMemoryParts = _options.MaxInMemoryDownloadParts
+            }, cancellationToken);
+
+            return response.ResponseStream;
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+        {
+            var response = await transferUtility.S3Client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = _options.BucketName,
+                Key = BuildObjectKey(key)
+            }, cancellationToken);
+
+            return response.ResponseStream;
+        }
     }
 
     private string BuildObjectKey(string key)

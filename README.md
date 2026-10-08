@@ -14,7 +14,7 @@ Supports Amazon S3 and compatible providers, including custom endpoints.
 ## Features
 
 - Stream upload, download, and idempotent deletion.
-- Multipart uploads through the AWS SDK TransferUtility and streaming downloads.
+- Multipart uploads and parallel ranged downloads through the AWS SDK TransferUtility.
 - Presigned PUT and GET URLs with configurable expiration.
 - Optional key prefix for separating environments in one bucket.
 - Configuration binding, startup validation, and dependency injection.
@@ -37,6 +37,8 @@ Configure an existing bucket and the AWS SDK endpoint in `appsettings.json`:
   "S3Storage": {
     "BucketName": "files",
     "KeyPrefix": "development",
+    "MaxInMemoryDownloadParts": 4,
+    "DownloadPartSizeBytes": 8388608,
     "PresignedUrlLifetime": "00:15:00"
   }
 }
@@ -90,6 +92,13 @@ storage failures propagate. Deleting an absent object succeeds.
 `UploadAsync` and `DeleteAsync` validate arguments synchronously
 before returning the SDK task.
 
+Downloads use parallel HTTP Range requests. `DownloadPartSizeBytes` defaults to 8 MiB
+and `MaxInMemoryDownloadParts` defaults to 4; both must be positive. Their product estimates
+part buffering per active download: 32 MiB with defaults, plus SDK and HTTP overhead.
+Account for simultaneous downloads when sizing these limits.
+If opening a ranged download fails with HTTP 416, the adapter retries once
+with a regular GET, supporting providers that reject ranged or part GETs for empty files.
+
 `GetPresignedUploadUrlAsync` signs an HTTP PUT for the declared content type and size.
 Send the returned `RequiredHeaders` and the exact content length. The HTTP client
 normally sets content length from the upload body. `GetPresignedDownloadUrlAsync`
@@ -117,8 +126,8 @@ and registration. Integration tests require Docker and start
 [SeaweedFS](https://github.com/seaweedfs/seaweedfs) `4.48` through Testcontainers.
 They exercise real S3 requests, prefixes, presigned HTTP uploads and downloads,
 and rejection of modified signed requests. Transfer tests verify single PUT below
-the 16 MiB threshold, multipart requests at and above it, and downloaded SHA-256
-hashes for small and large files. Each test uses a unique
+the 16 MiB threshold, multipart requests at and above it, ranged downloads exceeding
+the part buffer limit, and SHA-256 hashes for small and large files. Each test uses a unique
 prefix; disposing the container removes its data. No external S3 credentials are needed.
 
 Every pull request and push to `main` runs formatting, tests, coverage checks, and
