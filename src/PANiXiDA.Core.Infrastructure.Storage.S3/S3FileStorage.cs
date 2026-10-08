@@ -27,7 +27,6 @@ internal sealed class S3FileStorage(
         string contentType,
         CancellationToken cancellationToken)
     {
-        var objectKey = BuildObjectKey(key);
         ValidateContentType(contentType);
         if (content is null || !content.CanRead)
         {
@@ -37,7 +36,7 @@ internal sealed class S3FileStorage(
         return transferUtility.UploadWithResponseAsync(new TransferUtilityUploadRequest
         {
             BucketName = _options.BucketName,
-            Key = objectKey,
+            Key = BuildObjectKey(key),
             InputStream = new NonDisposingWrapperStream(content),
             ContentType = contentType,
             AutoCloseStream = false,
@@ -49,13 +48,12 @@ internal sealed class S3FileStorage(
         string key,
         CancellationToken cancellationToken)
     {
-        var objectKey = BuildObjectKey(key);
         try
         {
             var response = await transferUtility.S3Client.GetObjectAsync(new GetObjectRequest
             {
                 BucketName = _options.BucketName,
-                Key = objectKey
+                Key = BuildObjectKey(key)
             }, cancellationToken);
 
             return response.ResponseStream;
@@ -71,11 +69,10 @@ internal sealed class S3FileStorage(
         string key,
         CancellationToken cancellationToken)
     {
-        var objectKey = BuildObjectKey(key);
         return transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
         {
             BucketName = _options.BucketName,
-            Key = objectKey
+            Key = BuildObjectKey(key)
         }, cancellationToken);
     }
 
@@ -85,7 +82,6 @@ internal sealed class S3FileStorage(
         long size,
         CancellationToken cancellationToken)
     {
-        var objectKey = BuildObjectKey(key);
         ValidateContentType(contentType);
         ArgumentOutOfRangeException.ThrowIfNegative(size);
         cancellationToken.ThrowIfCancellationRequested();
@@ -93,7 +89,7 @@ internal sealed class S3FileStorage(
         var request = new GetPreSignedUrlRequest
         {
             BucketName = _options.BucketName,
-            Key = objectKey,
+            Key = BuildObjectKey(key),
             Verb = HttpVerb.PUT,
             Expires = expiresAt.UtcDateTime,
             Protocol = GetPresignedUrlProtocol(),
@@ -116,7 +112,6 @@ internal sealed class S3FileStorage(
         string contentType,
         CancellationToken cancellationToken)
     {
-        var objectKey = BuildObjectKey(key);
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
         ValidateContentType(contentType);
         cancellationToken.ThrowIfCancellationRequested();
@@ -125,7 +120,7 @@ internal sealed class S3FileStorage(
         var request = new GetPreSignedUrlRequest
         {
             BucketName = _options.BucketName,
-            Key = objectKey,
+            Key = BuildObjectKey(key),
             Verb = HttpVerb.GET,
             Expires = expiresAt.UtcDateTime,
             Protocol = GetPresignedUrlProtocol(),
