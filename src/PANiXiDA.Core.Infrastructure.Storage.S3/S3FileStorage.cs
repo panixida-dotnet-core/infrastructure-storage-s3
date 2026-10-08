@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Mime;
 using Amazon.Runtime.Internal.Util;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.S3.Transfer;
+using Amazon.Util;
 using Microsoft.Extensions.Options;
 using PANiXiDA.Core.Application.Storage;
 using PANiXiDA.Core.Application.Storage.Models;
@@ -32,7 +34,6 @@ internal sealed class S3FileStorage(
             throw new ArgumentException("A readable content stream is required.", nameof(content));
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
         return transferUtility.UploadWithResponseAsync(new TransferUtilityUploadRequest
         {
             BucketName = _options.BucketName,
@@ -49,7 +50,6 @@ internal sealed class S3FileStorage(
         CancellationToken cancellationToken)
     {
         var objectKey = BuildObjectKey(key);
-        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             var response = await transferUtility.S3Client.GetObjectAsync(new GetObjectRequest
@@ -72,7 +72,6 @@ internal sealed class S3FileStorage(
         CancellationToken cancellationToken)
     {
         var objectKey = BuildObjectKey(key);
-        cancellationToken.ThrowIfCancellationRequested();
         return transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
         {
             BucketName = _options.BucketName,
@@ -105,7 +104,7 @@ internal sealed class S3FileStorage(
         var url = await transferUtility.S3Client.GetPreSignedURLAsync(request).WaitAsync(cancellationToken);
         var headers = new ReadOnlyDictionary<string, string>(new Dictionary<string, string>
         {
-            ["Content-Type"] = contentType
+            [HeaderKeys.ContentTypeHeader] = contentType
         });
 
         return new PresignedUploadUrl(url, expiresAt, headers);
@@ -122,7 +121,7 @@ internal sealed class S3FileStorage(
         ValidateContentType(contentType);
         cancellationToken.ThrowIfCancellationRequested();
         var expiresAt = timeProvider.GetUtcNow().Add(_options.PresignedUrlLifetime);
-        var disposition = new ContentDispositionHeaderValue("attachment") { FileNameStar = fileName };
+        var disposition = new ContentDispositionHeaderValue(DispositionTypeNames.Attachment) { FileNameStar = fileName };
         var request = new GetPreSignedUrlRequest
         {
             BucketName = _options.BucketName,

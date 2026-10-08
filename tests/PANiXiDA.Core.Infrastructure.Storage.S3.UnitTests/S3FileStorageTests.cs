@@ -227,21 +227,16 @@ public sealed class S3FileStorageTests
             CreateStorage().GetPresignedDownloadUrlAsync("file", name!, "text/plain", CancellationToken.None));
     }
 
-    [Fact(DisplayName = "Already canceled operations never contact storage")]
-    public async Task Cancellation()
+    [Fact(DisplayName = "Already canceled URL requests never start signing")]
+    public async Task CanceledSigning()
     {
         var storage = CreateStorage();
-        using var content = new MemoryStream();
         using var cancellation = new CancellationTokenSource();
         await cancellation.CancelAsync();
 
-        await Should.ThrowAsync<OperationCanceledException>(() => storage.UploadAsync("file", content, "text/plain", cancellation.Token));
-        await Should.ThrowAsync<OperationCanceledException>(() => storage.DownloadAsync("file", cancellation.Token));
-        await Should.ThrowAsync<OperationCanceledException>(() => storage.DeleteAsync("file", cancellation.Token));
         await Should.ThrowAsync<OperationCanceledException>(() => storage.GetPresignedUploadUrlAsync("file", "text/plain", 0, cancellation.Token));
         await Should.ThrowAsync<OperationCanceledException>(() => storage.GetPresignedDownloadUrlAsync("file", "file.txt", "text/plain", cancellation.Token));
-        _client.ReceivedCalls().ShouldNotContain(call => call.GetMethodInfo().Name.EndsWith("Async", StringComparison.Ordinal));
-        _transfer.ReceivedCalls().ShouldNotContain(call => call.GetMethodInfo().Name.EndsWith("Async", StringComparison.Ordinal));
+        await _client.DidNotReceive().GetPreSignedURLAsync(Arg.Any<GetPreSignedUrlRequest>());
     }
 
     [Theory(DisplayName = "Cancellation interrupts waiting for URL signing")]

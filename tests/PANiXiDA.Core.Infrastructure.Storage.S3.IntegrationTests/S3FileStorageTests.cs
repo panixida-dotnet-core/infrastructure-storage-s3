@@ -53,6 +53,24 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
         await Should.ThrowAsync<FileNotFoundException>(() => _storage.DownloadAsync(key, TestContext.Current.CancellationToken));
     }
 
+    [Fact(DisplayName = "The SDK rejects already canceled transfers and deletion without changing stored objects")]
+    public async Task AlreadyCanceledOperations()
+    {
+        using var original = new MemoryStream("original"u8.ToArray());
+        await _storage.UploadAsync("existing.txt", original, "text/plain", TestContext.Current.CancellationToken);
+        using var content = new MemoryStream("content"u8.ToArray());
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => _storage.UploadAsync("canceled.txt", content, "text/plain", cancellation.Token));
+        await Should.ThrowAsync<OperationCanceledException>(() => _storage.DownloadAsync("existing.txt", cancellation.Token));
+        await Should.ThrowAsync<OperationCanceledException>(() => _storage.DeleteAsync("existing.txt", cancellation.Token));
+
+        (await ReadTextAsync(_storage, "existing.txt")).ShouldBe("original");
+        await Should.ThrowAsync<FileNotFoundException>(() => _storage.DownloadAsync("canceled.txt", TestContext.Current.CancellationToken));
+        content.CanRead.ShouldBeTrue();
+    }
+
     [Fact(DisplayName = "Uploading an existing key replaces content and starts at the current stream position")]
     public async Task ReplaceFromCurrentPosition()
     {
