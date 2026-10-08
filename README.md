@@ -113,8 +113,10 @@ dotnet pack --configuration Release
 Unit tests cover validation, SDK request mapping, error handling, cancellation,
 and registration. Integration tests require Docker and start
 [SeaweedFS](https://github.com/seaweedfs/seaweedfs) `4.48` through Testcontainers.
-They exercise real S3 requests, multipart transfers, prefixes, presigned HTTP uploads
-and downloads, and rejection of modified signed requests. Each test uses a unique
+They exercise real S3 requests, prefixes, presigned HTTP uploads and downloads,
+and rejection of modified signed requests. Transfer tests verify single PUT below
+the 16 MiB threshold, multipart requests at and above it, and downloaded SHA-256
+hashes for small and large files. Each test uses a unique
 prefix; disposing the container removes its data. No external S3 credentials are needed.
 
 Every pull request and push to `main` runs formatting, tests, coverage checks, and

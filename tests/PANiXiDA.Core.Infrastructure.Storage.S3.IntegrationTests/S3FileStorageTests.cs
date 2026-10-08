@@ -1,8 +1,11 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using Amazon.Runtime;
 using Amazon.S3;
+using Amazon.S3.Model;
 using Microsoft.Extensions.DependencyInjection;
 using PANiXiDA.Core.Application.Storage;
 using PANiXiDA.Core.Infrastructure.Storage.S3.IntegrationTests.Infrastructure;
@@ -64,17 +67,56 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
         replacement.CanRead.ShouldBeTrue();
     }
 
-    [Fact(DisplayName = "Multipart upload and streaming download preserve a large file")]
-    public async Task LargeFile()
+    [Theory(DisplayName = "File size selects single PUT or multipart upload and downloaded content stays intact")]
+    [InlineData(1024, false)]
+    [InlineData((16 * 1024 * 1024) - 1, false)]
+    [InlineData(16 * 1024 * 1024, true)]
+    [InlineData((16 * 1024 * 1024) + 1, true)]
+    [InlineData((20 * 1024 * 1024) + 1, true)]
+    public async Task UploadStrategyAndDownloadIntegrity(int size, bool multipart)
     {
-        var bytes = RandomNumberGenerator.GetBytes((20 * 1024 * 1024) + 1);
+        var requests = new ConcurrentQueue<AmazonWebServiceRequest>();
+        _client.ShouldBeOfType<AmazonS3Client>().BeforeRequestEvent += (_, args) =>
+        {
+            if (args is WebServiceRequestEventArgs requestArgs)
+            {
+                requests.Enqueue(requestArgs.Request);
+            }
+        };
+        var bytes = RandomNumberGenerator.GetBytes(size);
         using var content = new MemoryStream(bytes);
 
-        await _storage.UploadAsync("large.bin", content, "application/octet-stream", TestContext.Current.CancellationToken);
-        await using var downloaded = await _storage.DownloadAsync("large.bin", TestContext.Current.CancellationToken);
+        await _storage.UploadAsync("file.bin", content, "application/octet-stream", TestContext.Current.CancellationToken);
 
+        var uploads = requests.ToArray();
+        if (multipart)
+        {
+            uploads.OfType<PutObjectRequest>().ShouldBeEmpty();
+            uploads.OfType<InitiateMultipartUploadRequest>().ShouldHaveSingleItem();
+            var parts = uploads.OfType<UploadPartRequest>().OrderBy(part => part.PartNumber).ToArray();
+            parts.Length.ShouldBeGreaterThan(1);
+            parts.Select(part => part.PartNumber).ShouldBe(Enumerable.Range(1, parts.Length).Select(number => (int?)number));
+            parts.Sum(part => part.PartSize).ShouldBe(size);
+            var uploadId = parts.Select(part => part.UploadId).Distinct().ShouldHaveSingleItem();
+            uploadId.ShouldNotBeNullOrWhiteSpace();
+            var completed = uploads.OfType<CompleteMultipartUploadRequest>().ShouldHaveSingleItem();
+            completed.UploadId.ShouldBe(uploadId);
+            completed.PartETags.Select(part => part.PartNumber).Order().ShouldBe(parts.Select(part => part.PartNumber));
+        }
+        else
+        {
+            uploads.OfType<PutObjectRequest>().ShouldHaveSingleItem();
+            uploads.OfType<InitiateMultipartUploadRequest>().ShouldBeEmpty();
+            uploads.OfType<UploadPartRequest>().ShouldBeEmpty();
+            uploads.OfType<CompleteMultipartUploadRequest>().ShouldBeEmpty();
+        }
+
+        await using var downloaded = await _storage.DownloadAsync("file.bin", TestContext.Current.CancellationToken);
         var hash = await SHA256.HashDataAsync(downloaded, TestContext.Current.CancellationToken);
         hash.ShouldBe(SHA256.HashData(bytes));
+        var metadata = await _client.GetObjectMetadataAsync(SeaweedFsContainerFixture.BucketName,
+            $"{_prefix}/file.bin", TestContext.Current.CancellationToken);
+        metadata.Headers.ContentLength.ShouldBe(size);
         content.CanRead.ShouldBeTrue();
     }
 
