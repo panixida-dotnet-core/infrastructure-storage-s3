@@ -13,8 +13,16 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" />
+        <PackageReference Include="AWSSDK.S3" />
+        <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+        <PackageReference Include="PANiXiDA.Core.Application" />
         <PackageReference Include="Nerdbank.GitVersioning">
             <PrivateAssets>all</PrivateAssets>
         </PackageReference>
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="PANiXiDA.Core.Infrastructure.Storage.S3.UnitTests" />
     </ItemGroup>
 </Project>

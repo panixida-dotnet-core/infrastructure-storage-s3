@@ -19,6 +19,7 @@
     <Project Path="src/PANiXiDA.Core.Infrastructure.Storage.S3/PANiXiDA.Core.Infrastructure.Storage.S3.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/PANiXiDA.Core.Infrastructure.Storage.S3.IntegrationTests/PANiXiDA.Core.Infrastructure.Storage.S3.IntegrationTests.csproj" />
     <Project Path="tests/PANiXiDA.Core.Infrastructure.Storage.S3.UnitTests/PANiXiDA.Core.Infrastructure.Storage.S3.UnitTests.csproj" />
   </Folder>
 </Solution>

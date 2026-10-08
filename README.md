@@ -1,186 +1,108 @@
-## What to do after creating a repository from this template
+# PANiXiDA.Core.Infrastructure.Storage.S3
 
-
-### 3. Update documentation
-- replace this template README with the project README
-- fill all placeholder sections
-- update badges
-- update installation instructions
-- add real usage examples
-
-### 4. Configure GitHub repository
-- register the repository in the shared SonarQube inventory
-
-### 5. Prepare the first release
-- verify NuGet metadata
-- verify README and icon inside the package
-- publish the first package version
-- the version is updated automatically based on the commit history
-
----
-
-# Universal README template for the NuGet package
-
-# <PackageName>
-
-`<PackageName>` is a .NET library for <short purpose>.
-
-It is designed for <target audience> who need <main value / main scenario>.
+S3 implementation of `IFileStorage` from `PANiXiDA.Core.Application` for .NET 10.
+Supports Amazon S3 and compatible providers, including custom endpoints.
 
 ## Status
 
-[![CI](https://github.com/<OWNER>/<REPOSITORY>/actions/workflows/ci.yml/badge.svg)](https://github.com/<OWNER>/<REPOSITORY>/actions/workflows/ci.yml)
-[![NuGet](https://img.shields.io/nuget/v/<PACKAGE_ID>.svg)](https://www.nuget.org/packages/<PACKAGE_ID>)
-[![NuGet downloads](https://img.shields.io/nuget/dt/<PACKAGE_ID>.svg)](https://www.nuget.org/packages/<PACKAGE_ID>)
+[![CI](https://github.com/panixida-dotnet-core/infrastructure-storage-s3/actions/workflows/ci.yml/badge.svg)](https://github.com/panixida-dotnet-core/infrastructure-storage-s3/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/v/PANiXiDA.Core.Infrastructure.Storage.S3.svg)](https://www.nuget.org/packages/PANiXiDA.Core.Infrastructure.Storage.S3)
+[![NuGet downloads](https://img.shields.io/nuget/dt/PANiXiDA.Core.Infrastructure.Storage.S3.svg)](https://www.nuget.org/packages/PANiXiDA.Core.Infrastructure.Storage.S3)
 [![Target Framework](https://img.shields.io/badge/target-net10.0-512BD4)](https://dotnet.microsoft.com/)
-[![License](https://img.shields.io/github/license/<OWNER>/<REPOSITORY>.svg)](LICENSE)
-
-## Overview
-
-Describe:
-
-- what problem this package solves;
-- why it exists;
-- where it fits in the system or ecosystem;
-- how it differs from alternatives, if that matters.
-
-Keep this section short and practical.
+[![License](https://img.shields.io/github/license/panixida-dotnet-core/infrastructure-storage-s3.svg)](LICENSE)
 
 ## Features
 
-- Feature 1
-- Feature 2
-- Feature 3
-- Feature 4
-- Feature 5
+- Stream upload, download, and idempotent deletion.
+- Multipart uploads and range downloads through the AWS SDK TransferUtility.
+- Presigned PUT and GET URLs with configurable expiration.
+- Optional key prefix for separating environments in one bucket.
+- Configuration binding, startup validation, and dependency injection.
 
 ## Quick Start
 
-### Requirements
+```bash
+dotnet add package PANiXiDA.Core.Infrastructure.Storage.S3
+```
 
-- .NET 10 SDK
+Configure an existing bucket and the AWS SDK endpoint in `appsettings.json`:
 
-### Installation
+```json
+{
+  "AWS": {
+    "ServiceURL": "https://s3.example.com",
+    "AuthenticationRegion": "us-east-1",
+    "ForcePathStyle": true
+  },
+  "S3Storage": {
+    "BucketName": "files",
+    "KeyPrefix": "development",
+    "PresignedUrlLifetime": "00:15:00",
+    "MaxInMemoryDownloadParts": 4
+  }
+}
+```
 
-```xml
-<ItemGroup>
-  <PackageReference Include="<PACKAGE_ID>" Version="..." />
-</ItemGroup>
-````
+Provide credentials through `S3Storage__AccessKey` and `S3Storage__SecretKey`
+environment variables or a secret configuration provider. Omit both to use the
+standard AWS credential chain. For Amazon S3, use `AWS:Region` instead of a custom
+`ServiceURL` and `AuthenticationRegion`.
 
-### Minimal import
+Register storage in the application:
 
 ```csharp
-using <RootNamespace>;
+using PANiXiDA.Core.Infrastructure.Storage.S3.DependencyInjection;
+
+builder.Services.AddS3FileStorage(builder.Configuration);
 ```
 
-### First example
+Consumers depend on the application contract:
 
 ```csharp
-// Add a minimal example here
+using PANiXiDA.Core.Application.Storage;
+
+public sealed class FileContentService(IFileStorage storage)
+{
+    public Task UploadAsync(string key, Stream content, CancellationToken cancellationToken)
+    {
+        return storage.UploadAsync(key, content, "application/octet-stream", cancellationToken);
+    }
+
+    public async Task CopyToAsync(string key, Stream destination, CancellationToken cancellationToken)
+    {
+        await using var content = await storage.DownloadAsync(key, cancellationToken);
+        await content.CopyToAsync(destination, cancellationToken);
+    }
+}
 ```
 
-## Usage
+## Storage Behavior
 
-### Basic usage
+Keys are case-sensitive, relative paths generated and persisted by the application.
+The adapter prepends `KeyPrefix`: `files/avatar.png` becomes
+`development/files/avatar.png`. Empty keys, leading slashes, backslashes, and `.` or
+`..` path segments are rejected. Prefixes are logical namespaces; access policies
+must enforce any required isolation.
 
-```csharp
-// Add a basic example here
-```
+Uploads read from the stream's current position, leave it open, and replace existing
+content at the same key. The caller disposes download streams and passes cancellation
+tokens to subsequent reads. Missing objects raise `FileNotFoundException`; other
+storage failures propagate. Deleting an absent object succeeds.
 
-### Typical scenario
+`GetPresignedUploadUrlAsync` signs an HTTP PUT for the declared content type and size.
+Send the returned `RequiredHeaders` and the exact content length. The HTTP client
+normally sets content length from the upload body. `GetPresignedDownloadUrlAsync`
+signs an HTTP GET with the suggested file name and response content type; no extra
+request headers are needed. Use URLs unchanged. URL lifetime defaults to 15 minutes
+and must be greater than zero and at most seven days; credentials can expire earlier.
 
-```csharp
-// Add a realistic example here
-```
-
-### Advanced scenario
-
-```csharp
-// Add an advanced example here if needed
-```
-
-## Configuration
-
-Describe configuration only if the package actually requires it.
-
-Possible topics:
-
-* environment variables;
-* `appsettings.json`;
-* feature flags;
-* external services;
-* secrets;
-* runtime prerequisites.
-
-If the package does not require runtime configuration, say so explicitly.
-
-## Project Structure
-
-```text
-.
-├── src/
-│   └── <ProjectName>/
-├── tests/
-│   └── <ProjectName>.UnitTests/
-├── .editorconfig
-├── .gitattributes
-├── .gitignore
-├── Directory.Build.props
-├── Directory.Build.targets
-├── Directory.Packages.props
-├── global.json
-├── version.json
-├── LICENSE
-└── README.md
-```
-
-### Main repository files
-
-* `src/` — source code
-* `tests/` — automated tests
-* `Directory.Build.props` — shared MSBuild settings
-* `Directory.Build.targets` — shared build / packaging settings
-* `Directory.Packages.props` — centralized package versions
-* `global.json` — SDK and tooling configuration
-* `version.json` — versioning configuration
-* `README.md` — package overview and usage documentation
+URL generation does not transfer content or check whether the object exists.
+Applications authorize access, verify uploaded content, and manage metadata and
+coordination with database transactions. Browser clients also require a suitable
+bucket CORS policy.
 
 ## Development
 
-### Build
-
-```bash
-dotnet restore
-dotnet build --configuration Release
-```
-
-### Format
-
-```bash
-dotnet format
-```
-
-### Test
-
-```bash
-dotnet test --configuration Release
-```
-
-### Pack
-
-```bash
-dotnet pack --configuration Release
-```
-
-### Continuous integration
-
-Every pull request and push to `main` runs formatting, tests, and mandatory
-SonarQube analysis. Publishing from `main` starts only after the SonarQube
-Quality Gate succeeds.
-
-### Full local validation
-
 ```bash
 dotnet restore
 dotnet format
@@ -189,89 +111,17 @@ dotnet test --configuration Release
 dotnet pack --configuration Release
 ```
 
-### Tooling and conventions
+Unit tests cover validation, SDK request mapping, error handling, cancellation,
+and registration. Integration tests require Docker and start
+[SeaweedFS](https://github.com/seaweedfs/seaweedfs) `4.48` through Testcontainers.
+They exercise real S3 requests, multipart transfers, prefixes, presigned HTTP uploads
+and downloads, and rejection of modified signed requests. Each test uses a unique
+prefix; disposing the container removes its data. No external S3 credentials are needed.
 
-This repository uses:
-
-* .NET 10
-* Nullable enabled
-* Implicit usings enabled
-* Central package management
-* GitHub Actions
-* SonarQube
-* Nerdbank.GitVersioning
-
-Add more items only if they are actually relevant for the repository.
-
-## API / Contracts / Examples
-
-Describe the public API surface here.
-
-Suggested structure:
-
-* core abstractions;
-* main entry points;
-* key extension methods;
-* important behavioral notes;
-* typical integration examples.
-
-## Roadmap / TODO
-
-Potential future improvements:
-
-* item 1;
-* item 2;
-* item 3.
-
-Remove this section if it does not provide value.
-
-## Contributing
-
-Contributions are welcome.
-
-### General rules
-
-* keep the public API intentional;
-* avoid unnecessary dependencies;
-* preserve repository conventions;
-* do not introduce breaking changes without review;
-* keep documentation updated.
-
-### Code style
-
-* follow the repository `.editorconfig`;
-* prefer readable and explicit code;
-* keep naming consistent with the existing codebase.
-
-### Tests
-
-* add or update tests for meaningful behavior changes;
-* cover both success and failure scenarios where applicable;
-* add regression tests for bug fixes.
-
-### Validation before completion
-
-Run:
-
-```bash
-dotnet restore
-dotnet format
-dotnet build --configuration Release
-dotnet test --configuration Release
-```
+Every pull request and push to `main` runs formatting, tests, coverage checks, and
+SonarQube analysis. Publishing from `main` requires the SonarQube Quality Gate to pass.
+Versions are generated by Nerdbank.GitVersioning.
 
 ## License
 
-This project is licensed under the <LicenseName> license.
-
-See the [LICENSE](LICENSE) file for details.
-
-## Maintainers / Contacts
-
-Maintained by <Author / Team / Organization>.
-
-For questions or improvements, use:
-
-* GitHub Issues
-* Pull Requests
-* GitHub Discussions, if enabled
+[Apache License 2.0](LICENSE).
