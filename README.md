@@ -87,6 +87,8 @@ Uploads read from the stream's current position, leave it open, and replace exis
 content at the same key. The caller disposes download streams and passes cancellation
 tokens to subsequent reads. Missing objects raise `FileNotFoundException`; other
 storage failures propagate. Deleting an absent object succeeds.
+`UploadAsync` and `DeleteAsync` validate arguments and cancellation synchronously
+before returning the SDK task.
 
 `GetPresignedUploadUrlAsync` signs an HTTP PUT for the declared content type and size.
 Send the returned `RequiredHeaders` and the exact content length. The HTTP client

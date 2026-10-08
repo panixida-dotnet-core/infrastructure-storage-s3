@@ -19,7 +19,7 @@ internal sealed class S3FileStorage(
 {
     private readonly S3StorageOptions _options = options.Value;
 
-    public async Task UploadAsync(
+    public Task UploadAsync(
         string key,
         Stream content,
         string contentType,
@@ -33,12 +33,11 @@ internal sealed class S3FileStorage(
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        using var uploadStream = new NonDisposingWrapperStream(content);
-        await transferUtility.UploadWithResponseAsync(new TransferUtilityUploadRequest
+        return transferUtility.UploadWithResponseAsync(new TransferUtilityUploadRequest
         {
             BucketName = _options.BucketName,
             Key = objectKey,
-            InputStream = uploadStream,
+            InputStream = new NonDisposingWrapperStream(content),
             ContentType = contentType,
             AutoCloseStream = false,
             AutoResetStreamPosition = false
@@ -68,13 +67,13 @@ internal sealed class S3FileStorage(
         }
     }
 
-    public async Task DeleteAsync(
+    public Task DeleteAsync(
         string key,
         CancellationToken cancellationToken)
     {
         var objectKey = BuildObjectKey(key);
         cancellationToken.ThrowIfCancellationRequested();
-        await transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
+        return transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
         {
             BucketName = _options.BucketName,
             Key = objectKey
