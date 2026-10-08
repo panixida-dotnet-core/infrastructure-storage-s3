@@ -11,7 +11,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\..\src\PANiXiDA.Core.Template\PANiXiDA.Core.Template.csproj" />
+        <ProjectReference Include="..\..\src\PANiXiDA.Core.Infrastructure.Storage.S3\PANiXiDA.Core.Infrastructure.Storage.S3.csproj" />
     </ItemGroup>
 
     <ItemGroup>

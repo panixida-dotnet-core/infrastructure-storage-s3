@@ -16,9 +16,9 @@
     <File Path="version.json" />
   </Folder>
   <Folder Name="/src/">
-    <Project Path="src/PANiXiDA.Core.Template/PANiXiDA.Core.Template.csproj" Id="0cc00769-ff3c-4d7e-a1f5-82129017c584" />
+    <Project Path="src/PANiXiDA.Core.Infrastructure.Storage.S3/PANiXiDA.Core.Infrastructure.Storage.S3.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/PANiXiDA.Core.Template.UnitTests/PANiXiDA.Core.Template.UnitTests.csproj" Id="0c52a751-d397-43b0-b106-5b74879d4592" />
+    <Project Path="tests/PANiXiDA.Core.Infrastructure.Storage.S3.UnitTests/PANiXiDA.Core.Infrastructure.Storage.S3.UnitTests.csproj" />
   </Folder>
 </Solution>
