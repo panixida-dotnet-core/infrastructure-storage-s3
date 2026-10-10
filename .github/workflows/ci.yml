@@ -17,14 +17,14 @@ jobs:
           registry-token: ${{ secrets.REGISTRY_TOKEN }}
         
     tests:
-        uses: PANiXiDA-Infrastructure/ci-cd/.github/workflows/dotnet-tests.yml@ed001afd3e455053421c62a3b9e9e8ffd1f4ea9b
+        uses: PANiXiDA-Infrastructure/ci-cd/.github/workflows/dotnet-tests.yml@main
         secrets:
           registry-user: ${{ secrets.REGISTRY_USER }}
           registry-token: ${{ secrets.REGISTRY_TOKEN }}
 
     sonar:
         needs: tests
-        uses: PANiXiDA-Infrastructure/ci-cd/.github/workflows/dotnet-sonar.yml@ed001afd3e455053421c62a3b9e9e8ffd1f4ea9b
+        uses: PANiXiDA-Infrastructure/ci-cd/.github/workflows/dotnet-sonar.yml@5610bff41c45f2cac47dff2cd6c2219c012048c4
         with:
           project-key: ${{ vars.SONAR_PROJECT_KEY }}
           project-version-file: version.json
