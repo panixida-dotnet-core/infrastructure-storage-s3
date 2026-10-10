@@ -310,3 +310,11 @@ See the [LICENSE](LICENSE) file for details.
 Maintained by PANiXiDA. For questions or improvements, use
 [GitHub Issues](https://github.com/panixida-dotnet-core/infrastructure-storage-s3/issues)
 or [Pull Requests](https://github.com/panixida-dotnet-core/infrastructure-storage-s3/pulls).
+
+## SonarQube new code
+
+The SonarQube project uses `Previous version`. CI passes the stable `version`
+field from the root `version.json` via `project-version-file: version.json`.
+Increment that version when starting the next development cycle. Computed NuGet
+build versions do not move the new-code baseline on every build. Pull requests
+are analyzed against their target branch independently of this version period.

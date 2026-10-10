@@ -27,6 +27,7 @@ jobs:
         uses: PANiXiDA-Infrastructure/ci-cd/.github/workflows/dotnet-sonar.yml@main
         with:
           project-key: ${{ vars.SONAR_PROJECT_KEY }}
+          project-version-file: version.json
         secrets:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           registry-user: ${{ secrets.REGISTRY_USER }}
