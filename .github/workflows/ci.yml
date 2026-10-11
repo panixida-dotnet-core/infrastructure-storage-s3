@@ -24,7 +24,7 @@ jobs:
 
     sonar:
         needs: tests
-        uses: PANiXiDA-Infrastructure/ci-cd/.github/workflows/dotnet-sonar.yml@5610bff41c45f2cac47dff2cd6c2219c012048c4
+        uses: PANiXiDA-Infrastructure/ci-cd/.github/workflows/dotnet-sonar.yml@main
         with:
           project-key: ${{ vars.SONAR_PROJECT_KEY }}
           project-version-file: version.json
