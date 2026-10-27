@@ -13,7 +13,7 @@
         <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.5.1" />
         <PackageVersion Include="Nerdbank.GitVersioning" Version="3.10.94" />
         <PackageVersion Include="NSubstitute" Version="6.2.0" />
-        <PackageVersion Include="PANiXiDA.Core.Application" Version="4.2.1" />
+        <PackageVersion Include="PANiXiDA.Core.Application" Version="5.3.1" />
         <PackageVersion Include="Testcontainers" Version="4.15.0" />
         <PackageVersion Include="xunit.v3" Version="4.0.1" />
         <PackageVersion Include="Shouldly" Version="4.3.0" />
