@@ -123,6 +123,91 @@ public sealed class S3FileStorageTests
         }
     }
 
+    [Theory(DisplayName = "Metadata queries return stored type and byte size using the configured bucket and prefix")]
+    [InlineData("", "folder/File.txt", 0L)]
+    [InlineData("development", "development/folder/File.txt", 4_294_967_296L)]
+    public async Task Metadata(string prefix, string expectedKey, long size)
+    {
+        var storage = CreateStorage(prefix);
+        var response = new GetObjectMetadataResponse { ContentLength = size };
+        response.Headers.ContentType = "text/plain";
+        _client.GetObjectMetadataAsync(Arg.Any<GetObjectMetadataRequest>(), Arg.Any<CancellationToken>())
+            .Returns(response);
+
+        var result = await storage.GetMetadataAsync("folder/File.txt", TestContext.Current.CancellationToken);
+
+        result.ShouldNotBeNull();
+        result.ContentType.ShouldBe("text/plain");
+        result.Size.ShouldBe(size);
+        await _client.Received(1).GetObjectMetadataAsync(Arg.Is<GetObjectMetadataRequest>(request =>
+            request.BucketName == "files" && request.Key == expectedKey), TestContext.Current.CancellationToken);
+        await _client.DidNotReceive().GetObjectAsync(Arg.Any<GetObjectRequest>(), Arg.Any<CancellationToken>());
+        await _transfer.DidNotReceive().OpenStreamWithResponseAsync(
+            Arg.Any<TransferUtilityOpenStreamRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory(DisplayName = "Metadata queries return null for any HTTP 404 and preserve other storage failures")]
+    [InlineData(HttpStatusCode.NotFound, "NoSuchKey", true)]
+    [InlineData(HttpStatusCode.NotFound, "NotFound", true)]
+    [InlineData(HttpStatusCode.NotFound, "404", true)]
+    [InlineData(HttpStatusCode.NotFound, "NoSuchBucket", true)]
+    [InlineData(HttpStatusCode.NotFound, "UnknownError", true)]
+    [InlineData(HttpStatusCode.NotFound, null, true)]
+    [InlineData(HttpStatusCode.Forbidden, "AccessDenied", false)]
+    [InlineData(HttpStatusCode.Forbidden, "NoSuchKey", false)]
+    [InlineData(HttpStatusCode.InternalServerError, "InternalError", false)]
+    public async Task MetadataFailure(HttpStatusCode status, string? code, bool returnsNull)
+    {
+        var storage = CreateStorage();
+        var failure = new AmazonS3Exception("Storage failure") { StatusCode = status, ErrorCode = code };
+        _client.GetObjectMetadataAsync(Arg.Any<GetObjectMetadataRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<GetObjectMetadataResponse>(failure));
+
+        if (returnsNull)
+        {
+            var result = await storage.GetMetadataAsync("file.txt", TestContext.Current.CancellationToken);
+
+            result.ShouldBeNull();
+        }
+        else
+        {
+            var exception = await Should.ThrowAsync<AmazonS3Exception>(() =>
+                storage.GetMetadataAsync("file.txt", TestContext.Current.CancellationToken));
+
+            exception.ShouldBeSameAs(failure);
+        }
+    }
+
+    [Fact(DisplayName = "Already canceled metadata queries never start an S3 request")]
+    public async Task AlreadyCanceledMetadata()
+    {
+        var storage = CreateStorage();
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => storage.GetMetadataAsync("file.txt", cancellation.Token));
+
+        await _client.DidNotReceive().GetObjectMetadataAsync(
+            Arg.Any<GetObjectMetadataRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact(DisplayName = "Metadata queries forward cancellation and preserve the SDK cancellation result")]
+    public async Task MetadataCancellation()
+    {
+        var storage = CreateStorage();
+        using var cancellation = new CancellationTokenSource();
+        var completion = new TaskCompletionSource<GetObjectMetadataResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = cancellation.Token.Register(() => completion.TrySetCanceled(cancellation.Token));
+        _client.GetObjectMetadataAsync(Arg.Any<GetObjectMetadataRequest>(), Arg.Any<CancellationToken>())
+            .Returns(completion.Task);
+        var operation = storage.GetMetadataAsync("file.txt", cancellation.Token);
+
+        await cancellation.CancelAsync();
+        await Should.ThrowAsync<OperationCanceledException>(() => operation);
+
+        await _client.Received(1).GetObjectMetadataAsync(Arg.Any<GetObjectMetadataRequest>(), cancellation.Token);
+    }
+
     [Fact(DisplayName = "Delete uses the configured bucket and prefix")]
     public async Task Delete()
     {
@@ -227,6 +312,7 @@ public sealed class S3FileStorageTests
 
         await Should.ThrowAsync<ArgumentException>(() => storage.UploadAsync(key!, content, "text/plain", CancellationToken.None));
         await Should.ThrowAsync<ArgumentException>(() => storage.DownloadAsync(key!, CancellationToken.None));
+        await Should.ThrowAsync<ArgumentException>(() => storage.GetMetadataAsync(key!, CancellationToken.None));
         await Should.ThrowAsync<ArgumentException>(() => storage.DeleteAsync(key!, CancellationToken.None));
         await Should.ThrowAsync<ArgumentException>(() => storage.GetPresignedUploadUrlAsync(key!, "text/plain", 0, CancellationToken.None));
         await Should.ThrowAsync<ArgumentException>(() => storage.GetPresignedDownloadUrlAsync(key!, "file.txt", "text/plain", CancellationToken.None));

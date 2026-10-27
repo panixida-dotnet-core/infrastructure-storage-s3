@@ -62,6 +62,28 @@ internal sealed class S3FileStorage(
         }
     }
 
+    public async Task<FileMetadata?> GetMetadataAsync(
+        string key,
+        CancellationToken cancellationToken)
+    {
+        var request = new GetObjectMetadataRequest
+        {
+            BucketName = _options.BucketName,
+            Key = BuildObjectKey(key)
+        };
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            var response = await transferUtility.S3Client.GetObjectMetadataAsync(request, cancellationToken);
+
+            return new FileMetadata(response.Headers.ContentType, response.ContentLength);
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
     public Task DeleteAsync(
         string key,
         CancellationToken cancellationToken)

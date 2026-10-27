@@ -22,6 +22,7 @@ Applications own file keys, metadata, authorization, and database coordination.
 ## Features
 
 - Stream upload, download, and idempotent deletion.
+- Stored content type and size queries without downloading content.
 - Multipart uploads and parallel ranged downloads through the AWS SDK TransferUtility.
 - Presigned PUT and GET URLs with configurable expiration.
 - Optional key prefix for separating environments in one bucket.
@@ -81,6 +82,18 @@ public sealed class FileContentService(IFileStorage storage)
     }
 }
 ```
+
+### Stored metadata
+
+Call `IFileStorage.GetMetadataAsync(key, cancellationToken)` to read a stored object's
+content type and size using an S3 HEAD request. It returns `FileMetadata` with
+`ContentType` and a `long Size` in bytes, including zero for empty objects, or `null`
+when S3 responds with HTTP 404, regardless of its error code. The configured bucket
+and key prefix are applied in the same way as for uploads. Stored values still
+require application validation.
+
+Other storage failures propagate. The request honors cancellation and does not
+download file content.
 
 ### Direct client transfers
 
@@ -241,7 +254,8 @@ Nerdbank.GitVersioning generates package versions.
 | --- | --- | --- |
 | `AddS3FileStorage` | `PANiXiDA.Core.Infrastructure.Storage.S3.DependencyInjection` | Registers scoped `IFileStorage`, singleton AWS client and transfer utility, and validated options. |
 | `S3StorageOptions` | `PANiXiDA.Core.Infrastructure.Storage.S3.Configuration` | Configures bucket, prefix, credentials, download buffering, and URL lifetime. |
-| `IFileStorage` | `PANiXiDA.Core.Application.Storage` | Application contract for stream operations and presigned URLs, provided by Core.Application. |
+| `IFileStorage` | `PANiXiDA.Core.Application.Storage` | Application contract for stream operations, metadata queries and presigned URLs, provided by Core.Application. |
+| `FileMetadata` | `PANiXiDA.Core.Application.Storage.Models` | Stored content type and byte size returned by metadata queries. |
 | `PresignedUploadUrl` / `PresignedDownloadUrl` | `PANiXiDA.Core.Application.Storage.Models` | URL results provided by Core.Application. |
 
 ### Storage behavior
@@ -254,8 +268,8 @@ must enforce any required isolation.
 
 Uploads read from the stream's current position, leave it open, and replace existing
 content at the same key. The caller disposes download streams and passes cancellation
-tokens to subsequent reads. Missing objects raise `FileNotFoundException`; other
-storage failures propagate. Deleting an absent object succeeds.
+tokens to subsequent reads. Downloading a missing object raises `FileNotFoundException`;
+other storage failures propagate. Deleting an absent object succeeds.
 `UploadAsync` and `DeleteAsync` validate arguments synchronously
 before returning the SDK task.
 

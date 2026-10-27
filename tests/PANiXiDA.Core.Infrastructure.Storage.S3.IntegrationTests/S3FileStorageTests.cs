@@ -53,6 +53,51 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
         await Should.ThrowAsync<FileNotFoundException>(() => _storage.DownloadAsync(key, TestContext.Current.CancellationToken));
     }
 
+    [Theory(DisplayName = "Metadata queries return current stored values without downloading file content")]
+    [InlineData("folder/File.txt", "content")]
+    [InlineData("папка/файл + %23.txt", "данные")]
+    [InlineData("empty.txt", "")]
+    public async Task Metadata(string key, string text)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        using var content = new MemoryStream(bytes);
+        await _storage.UploadAsync(key, content, "text/plain", TestContext.Current.CancellationToken);
+        var requests = new ConcurrentQueue<AmazonWebServiceRequest>();
+        _client.ShouldBeOfType<AmazonS3Client>().BeforeRequestEvent += (_, args) =>
+        {
+            if (args is WebServiceRequestEventArgs requestArgs)
+            {
+                requests.Enqueue(requestArgs.Request);
+            }
+        };
+
+        var metadata = await _storage.GetMetadataAsync(key, TestContext.Current.CancellationToken);
+
+        metadata.ShouldNotBeNull();
+        metadata.ContentType.ShouldBe("text/plain");
+        metadata.Size.ShouldBe(bytes.LongLength);
+        var request = requests.ShouldHaveSingleItem().ShouldBeOfType<GetObjectMetadataRequest>();
+        request.BucketName.ShouldBe(SeaweedFsContainerFixture.BucketName);
+        request.Key.ShouldBe($"{_prefix}/{key}");
+    }
+
+    [Fact(DisplayName = "Metadata queries return null before upload and after deletion")]
+    public async Task MissingMetadata()
+    {
+        using var content = new MemoryStream("content"u8.ToArray());
+
+        var missing = await _storage.GetMetadataAsync("file.txt", TestContext.Current.CancellationToken);
+        await _storage.UploadAsync("file.txt", content, "text/plain", TestContext.Current.CancellationToken);
+        var uploaded = await _storage.GetMetadataAsync("file.txt", TestContext.Current.CancellationToken);
+        await _storage.DeleteAsync("file.txt", TestContext.Current.CancellationToken);
+        var deleted = await _storage.GetMetadataAsync("file.txt", TestContext.Current.CancellationToken);
+
+        missing.ShouldBeNull();
+        uploaded.ShouldNotBeNull();
+        uploaded.Size.ShouldBe(content.Length);
+        deleted.ShouldBeNull();
+    }
+
     [Fact(DisplayName = "The SDK rejects already canceled transfers and deletion without changing stored objects")]
     public async Task AlreadyCanceledOperations()
     {
@@ -64,6 +109,7 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
 
         await Should.ThrowAsync<OperationCanceledException>(() => _storage.UploadAsync("canceled.txt", content, "text/plain", cancellation.Token));
         await Should.ThrowAsync<OperationCanceledException>(() => _storage.DownloadAsync("existing.txt", cancellation.Token));
+        await Should.ThrowAsync<OperationCanceledException>(() => _storage.GetMetadataAsync("existing.txt", cancellation.Token));
         await Should.ThrowAsync<OperationCanceledException>(() => _storage.DeleteAsync("existing.txt", cancellation.Token));
 
         (await ReadTextAsync(_storage, "existing.txt")).ShouldBe("original");
@@ -140,9 +186,10 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
         downloads.Select(request => request.ByteRange.Start)
             .ShouldBe(Enumerable.Range(0, partCount).Select(part => (long)part * downloadPartSize));
         downloads.ShouldAllBe(request => request.PartNumber == null);
-        var metadata = await _client.GetObjectMetadataAsync(SeaweedFsContainerFixture.BucketName,
-            $"{_prefix}/file.bin", TestContext.Current.CancellationToken);
-        metadata.Headers.ContentLength.ShouldBe(size);
+        var metadata = await _storage.GetMetadataAsync("file.bin", TestContext.Current.CancellationToken);
+        metadata.ShouldNotBeNull();
+        metadata.ContentType.ShouldBe("application/octet-stream");
+        metadata.Size.ShouldBe(size);
         content.CanRead.ShouldBeTrue();
     }
 
