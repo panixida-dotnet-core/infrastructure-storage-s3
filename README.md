@@ -88,11 +88,12 @@ public sealed class FileContentService(IFileStorage storage)
 Call `IFileStorage.GetMetadataAsync(key, cancellationToken)` to read a stored object's
 content type and size using an S3 HEAD request. It returns `FileMetadata` with
 `ContentType` and a `long Size` in bytes, including zero for empty objects, or `null`
-when the object does not exist. The configured bucket and key prefix are applied
-in the same way as for uploads. Stored values still require application validation.
+when S3 responds with HTTP 404, regardless of its error code. The configured bucket
+and key prefix are applied in the same way as for uploads. Stored values still
+require application validation.
 
-Access errors, missing buckets, and other storage failures propagate. The request
-honors cancellation and does not download file content.
+Other storage failures propagate. The request honors cancellation and does not
+download file content.
 
 ### Direct client transfers
 

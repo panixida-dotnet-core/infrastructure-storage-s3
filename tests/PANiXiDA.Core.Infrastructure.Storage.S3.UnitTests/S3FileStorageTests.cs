@@ -146,24 +146,24 @@ public sealed class S3FileStorageTests
             Arg.Any<TransferUtilityOpenStreamRequest>(), Arg.Any<CancellationToken>());
     }
 
-    [Theory(DisplayName = "Only recognized missing-object metadata responses return null while storage failures propagate")]
+    [Theory(DisplayName = "Metadata queries return null for any HTTP 404 and preserve other storage failures")]
     [InlineData(HttpStatusCode.NotFound, "NoSuchKey", true)]
     [InlineData(HttpStatusCode.NotFound, "NotFound", true)]
     [InlineData(HttpStatusCode.NotFound, "404", true)]
-    [InlineData(HttpStatusCode.NotFound, "NoSuchBucket", false)]
-    [InlineData(HttpStatusCode.NotFound, "UnknownError", false)]
-    [InlineData(HttpStatusCode.NotFound, null, false)]
+    [InlineData(HttpStatusCode.NotFound, "NoSuchBucket", true)]
+    [InlineData(HttpStatusCode.NotFound, "UnknownError", true)]
+    [InlineData(HttpStatusCode.NotFound, null, true)]
     [InlineData(HttpStatusCode.Forbidden, "AccessDenied", false)]
     [InlineData(HttpStatusCode.Forbidden, "NoSuchKey", false)]
     [InlineData(HttpStatusCode.InternalServerError, "InternalError", false)]
-    public async Task MetadataFailure(HttpStatusCode status, string? code, bool missingFile)
+    public async Task MetadataFailure(HttpStatusCode status, string? code, bool returnsNull)
     {
         var storage = CreateStorage();
         var failure = new AmazonS3Exception("Storage failure") { StatusCode = status, ErrorCode = code };
         _client.GetObjectMetadataAsync(Arg.Any<GetObjectMetadataRequest>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromException<GetObjectMetadataResponse>(failure));
 
-        if (missingFile)
+        if (returnsNull)
         {
             var result = await storage.GetMetadataAsync("file.txt", TestContext.Current.CancellationToken);
 

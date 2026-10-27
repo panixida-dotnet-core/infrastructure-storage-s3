@@ -78,9 +78,7 @@ internal sealed class S3FileStorage(
 
             return new FileMetadata(response.Headers.ContentType, response.ContentLength);
         }
-        catch (AmazonS3Exception exception) when (
-            exception.StatusCode == HttpStatusCode.NotFound
-                && exception.ErrorCode is "NoSuchKey" or "NotFound" or "404")
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
         }
