@@ -321,7 +321,7 @@ tokens to subsequent reads. Downloading a missing object raises `FileNotFoundExc
 other storage failures propagate. Deleting an absent object succeeds. With bucket versioning
 enabled, `DeleteAsync` creates a delete marker; historical versions and their version-bound
 URLs remain available until those versions are removed by S3 lifecycle or explicit version deletion.
-`UploadAsync` and `DeleteAsync` validate arguments synchronously
+The basic `UploadAsync` overload and `DeleteAsync` validate arguments synchronously
 before returning the SDK task.
 
 Downloads use parallel HTTP Range requests. The product of `DownloadPartSizeBytes`

@@ -36,7 +36,7 @@ internal sealed class S3FileStorage(
         return transferUtility.UploadWithResponseAsync(request, cancellationToken);
     }
 
-    public Task<FileUploadResult> UploadAsync(
+    public async Task<FileUploadResult> UploadAsync(
         string key,
         Stream content,
         string contentType,
@@ -44,7 +44,8 @@ internal sealed class S3FileStorage(
         CancellationToken cancellationToken)
     {
         var request = CreateUploadRequest(key, content, contentType, metadata);
-        return UploadWithMetadataAsync(request, cancellationToken);
+        var response = await transferUtility.UploadWithResponseAsync(request, cancellationToken);
+        return new FileUploadResult(response.VersionId);
     }
 
     public Task<Stream> DownloadAsync(string key, CancellationToken cancellationToken)
@@ -178,14 +179,6 @@ internal sealed class S3FileStorage(
         return request;
     }
 
-    private async Task<FileUploadResult> UploadWithMetadataAsync(
-        TransferUtilityUploadRequest request,
-        CancellationToken cancellationToken)
-    {
-        var response = await transferUtility.UploadWithResponseAsync(request, cancellationToken);
-        return new FileUploadResult(response.VersionId);
-    }
-
     private async Task<Stream> DownloadVersionAsync(
         string key,
         string? versionId,
@@ -247,9 +240,11 @@ internal sealed class S3FileStorage(
         {
             cancellationToken.ThrowIfCancellationRequested();
             var response = await transferUtility.S3Client.ListVersionsAsync(request, cancellationToken);
-            foreach (var version in response.Versions ?? [])
+            var versions = response.Versions ?? [];
+            for (var index = 0; index < versions.Count; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var version = versions[index];
                 if (!string.Equals(version.Key, objectKey, StringComparison.Ordinal) || version.IsDeleteMarker == true)
                 {
                     continue;
