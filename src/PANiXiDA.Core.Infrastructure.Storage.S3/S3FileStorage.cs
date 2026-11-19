@@ -95,10 +95,12 @@ internal sealed class S3FileStorage(
                 {
                     continue;
                 }
-                if (string.IsNullOrWhiteSpace(version.VersionId) || version.LastModified is not { } lastModified)
+                if (string.IsNullOrWhiteSpace(version.VersionId))
                 {
-                    throw new InvalidDataException("S3 returned a version without an identifier or modification time.");
+                    throw new InvalidDataException("S3 returned a version without an identifier.");
                 }
+                var lastModified = version.LastModified
+                    ?? throw new InvalidDataException("S3 returned a version without a modification time.");
 
                 yield return new FileVersion(
                     version.VersionId,
@@ -108,14 +110,14 @@ internal sealed class S3FileStorage(
             hasMorePages = response.IsTruncated == true;
             if (hasMorePages)
             {
-                if (response.NextKeyMarker is null
-                    || (response.NextKeyMarker == request.KeyMarker
-                        && response.NextVersionIdMarker == request.VersionIdMarker))
+                var nextKeyMarker = response.NextKeyMarker
+                    ?? throw new InvalidDataException("S3 did not return a key for the next version page.");
+                if ((nextKeyMarker, response.NextVersionIdMarker) == (request.KeyMarker, request.VersionIdMarker))
                 {
                     throw new InvalidDataException("S3 version pagination did not advance.");
                 }
 
-                request.KeyMarker = response.NextKeyMarker;
+                request.KeyMarker = nextKeyMarker;
                 request.VersionIdMarker = response.NextVersionIdMarker;
             }
         } while (hasMorePages);
@@ -207,8 +209,8 @@ internal sealed class S3FileStorage(
         using var headers = new HttpRequestMessage();
         foreach (var entry in metadata)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(entry.Key, nameof(metadata));
-            ArgumentNullException.ThrowIfNull(entry.Value, nameof(metadata));
+            ArgumentException.ThrowIfNullOrWhiteSpace(entry.Key);
+            ArgumentNullException.ThrowIfNull(entry.Value);
             if (entry.Key.StartsWith(MetadataHeaderPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 throw new ArgumentException("Metadata names must omit the x-amz-meta- prefix.", nameof(metadata));
