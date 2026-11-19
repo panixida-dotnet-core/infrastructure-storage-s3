@@ -455,12 +455,14 @@ public sealed class S3FileStorageVersionTests
     }
 
     [Fact(DisplayName = "Version enumeration validates keys before starting provider requests")]
-    public void GetVersionsAsync_Should_RejectKey_When_KeyEscapesPrefix()
+    public async Task GetVersionsAsync_Should_RejectKey_When_KeyEscapesPrefix()
     {
         var storage = CreateStorage();
 
-        Should.Throw<ArgumentException>(() =>
-            storage.GetVersionsAsync("../file", TestContext.Current.CancellationToken));
+        await Should.ThrowAsync<ArgumentException>(() =>
+            CollectAsync(storage.GetVersionsAsync("../file", TestContext.Current.CancellationToken)));
+        await _client.DidNotReceive().ListVersionsAsync(
+            Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>());
     }
 
     private static S3ObjectVersion Version(string key, string versionId, DateTime modified)

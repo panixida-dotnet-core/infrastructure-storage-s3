@@ -70,9 +70,54 @@ internal sealed class S3FileStorage(
         return GetVersionMetadataAsync(key, versionId, cancellationToken);
     }
 
-    public IAsyncEnumerable<FileVersion> GetVersionsAsync(string key, CancellationToken cancellationToken)
+    public async IAsyncEnumerable<FileVersion> GetVersionsAsync(
+        string key,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        return EnumerateVersionsAsync(BuildObjectKey(key), cancellationToken);
+        var objectKey = BuildObjectKey(key);
+        var request = new ListVersionsRequest
+        {
+            BucketName = _options.BucketName,
+            Prefix = objectKey
+        };
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var response = await transferUtility.S3Client.ListVersionsAsync(request, cancellationToken);
+            var versions = response.Versions ?? [];
+            for (var index = 0; index < versions.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var version = versions[index];
+                if (!string.Equals(version.Key, objectKey, StringComparison.Ordinal) || version.IsDeleteMarker == true)
+                {
+                    continue;
+                }
+                if (string.IsNullOrWhiteSpace(version.VersionId) || version.LastModified is not { } lastModified)
+                {
+                    throw new InvalidDataException("S3 returned a version without an identifier or modification time.");
+                }
+
+                yield return new FileVersion(
+                    version.VersionId,
+                    new DateTimeOffset(DateTime.SpecifyKind(lastModified, DateTimeKind.Utc)));
+            }
+
+            if (response.IsTruncated != true)
+            {
+                yield break;
+            }
+            if (response.NextKeyMarker is null
+                || (response.NextKeyMarker == request.KeyMarker
+                    && response.NextVersionIdMarker == request.VersionIdMarker))
+            {
+                throw new InvalidDataException("S3 version pagination did not advance.");
+            }
+
+            request.KeyMarker = response.NextKeyMarker;
+            request.VersionIdMarker = response.NextVersionIdMarker;
+        }
     }
 
     public Task DeleteAsync(
@@ -223,55 +268,6 @@ internal sealed class S3FileStorage(
         catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
-        }
-    }
-
-    private async IAsyncEnumerable<FileVersion> EnumerateVersionsAsync(
-        string objectKey,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var request = new ListVersionsRequest
-        {
-            BucketName = _options.BucketName,
-            Prefix = objectKey
-        };
-
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var response = await transferUtility.S3Client.ListVersionsAsync(request, cancellationToken);
-            var versions = response.Versions ?? [];
-            for (var index = 0; index < versions.Count; index++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var version = versions[index];
-                if (!string.Equals(version.Key, objectKey, StringComparison.Ordinal) || version.IsDeleteMarker == true)
-                {
-                    continue;
-                }
-                if (string.IsNullOrWhiteSpace(version.VersionId) || version.LastModified is not { } lastModified)
-                {
-                    throw new InvalidDataException("S3 returned a version without an identifier or modification time.");
-                }
-
-                yield return new FileVersion(
-                    version.VersionId,
-                    new DateTimeOffset(DateTime.SpecifyKind(lastModified, DateTimeKind.Utc)));
-            }
-
-            if (response.IsTruncated != true)
-            {
-                yield break;
-            }
-            if (response.NextKeyMarker is null
-                || (response.NextKeyMarker == request.KeyMarker
-                    && response.NextVersionIdMarker == request.VersionIdMarker))
-            {
-                throw new InvalidDataException("S3 version pagination did not advance.");
-            }
-
-            request.KeyMarker = response.NextKeyMarker;
-            request.VersionIdMarker = response.NextVersionIdMarker;
         }
     }
 
