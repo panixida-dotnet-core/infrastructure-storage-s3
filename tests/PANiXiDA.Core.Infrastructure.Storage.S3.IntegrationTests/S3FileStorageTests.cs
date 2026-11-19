@@ -7,7 +7,6 @@ using Amazon.Runtime;
 using Amazon.Runtime.Endpoints;
 using Amazon.S3;
 using Amazon.S3.Model;
-using Amazon.Util;
 using Microsoft.Extensions.DependencyInjection;
 using PANiXiDA.Core.Application.Storage;
 using PANiXiDA.Core.Infrastructure.Storage.S3.IntegrationTests.Infrastructure;
