@@ -76,7 +76,7 @@ internal sealed class S3FileStorage(
         {
             var response = await transferUtility.S3Client.GetObjectMetadataAsync(request, cancellationToken);
 
-            return new FileMetadata(response.Headers.ContentType, response.ContentLength);
+            return new FileMetadata(response.Headers.ContentType, response.ContentLength, response.VersionId);
         }
         catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {
