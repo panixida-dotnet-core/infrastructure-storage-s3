@@ -81,7 +81,8 @@ internal sealed class S3FileStorage(
             Prefix = objectKey
         };
 
-        while (true)
+        bool hasMorePages;
+        do
         {
             cancellationToken.ThrowIfCancellationRequested();
             var response = await transferUtility.S3Client.ListVersionsAsync(request, cancellationToken);
@@ -104,20 +105,20 @@ internal sealed class S3FileStorage(
                     new DateTimeOffset(DateTime.SpecifyKind(lastModified, DateTimeKind.Utc)));
             }
 
-            if (response.IsTruncated != true)
+            hasMorePages = response.IsTruncated == true;
+            if (hasMorePages)
             {
-                yield break;
-            }
-            if (response.NextKeyMarker is null
-                || (response.NextKeyMarker == request.KeyMarker
-                    && response.NextVersionIdMarker == request.VersionIdMarker))
-            {
-                throw new InvalidDataException("S3 version pagination did not advance.");
-            }
+                if (response.NextKeyMarker is null
+                    || (response.NextKeyMarker == request.KeyMarker
+                        && response.NextVersionIdMarker == request.VersionIdMarker))
+                {
+                    throw new InvalidDataException("S3 version pagination did not advance.");
+                }
 
-            request.KeyMarker = response.NextKeyMarker;
-            request.VersionIdMarker = response.NextVersionIdMarker;
-        }
+                request.KeyMarker = response.NextKeyMarker;
+                request.VersionIdMarker = response.NextVersionIdMarker;
+            }
+        } while (hasMorePages);
     }
 
     public Task DeleteAsync(
