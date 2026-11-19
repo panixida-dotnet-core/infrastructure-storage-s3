@@ -477,6 +477,29 @@ public sealed class S3FileStorageVersionTests
             Arg.Any<ListVersionsRequest>(), TestContext.Current.CancellationToken);
     }
 
+    [Fact(DisplayName = "Disposing during an active version request rejects overlapping enumeration operations")]
+    public async Task GetVersionsAsync_Should_RejectConcurrentDisposal_When_ProviderRequestIsInFlight()
+    {
+        var storage = CreateStorage();
+        var completion = new TaskCompletionSource<ListVersionsResponse>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _client.ListVersionsAsync(Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>())
+            .Returns(completion.Task);
+        await using var versions = storage.GetVersionsAsync("file", TestContext.Current.CancellationToken)
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        var pending = versions.MoveNextAsync().AsTask();
+
+        try
+        {
+            await Should.ThrowAsync<NotSupportedException>(() => versions.DisposeAsync().AsTask());
+        }
+        finally
+        {
+            completion.TrySetResult(new ListVersionsResponse());
+            (await pending).ShouldBeFalse();
+        }
+    }
+
     [Fact(DisplayName = "Version listing preserves provider failures")]
     public async Task GetVersionsAsync_Should_PropagateFailure_When_StorageIsUnavailable()
     {
