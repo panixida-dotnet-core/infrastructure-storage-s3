@@ -397,7 +397,8 @@ public sealed class S3FileStorageVersionTests
         {
             await cancellation.CancelAsync();
         }
-        await using var versions = storage.GetVersionsAsync("file", cancellation.Token).GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await using var versions = storage.GetVersionsAsync("file", cancellation.Token)
+            .GetAsyncEnumerator(cancellation.Token);
         if (!beforeStart)
         {
             (await versions.MoveNextAsync()).ShouldBeTrue();
