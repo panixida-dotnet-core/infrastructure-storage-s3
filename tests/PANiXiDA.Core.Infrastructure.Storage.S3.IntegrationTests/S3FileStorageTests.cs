@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using Amazon.Runtime;
+using Amazon.Runtime.Endpoints;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.DependencyInjection;
@@ -232,9 +233,16 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
     {
         using var http = new HttpClient();
         var bytes = Encoding.UTF8.GetBytes(text);
-        var before = DateTimeOffset.UtcNow;
+        var endpoint = _client.Config.DetermineServiceOperationEndpoint(
+            new ServiceOperationEndpointParameters(new GetPreSignedUrlRequest
+            {
+                BucketName = SeaweedFsContainerFixture.BucketName,
+                Key = $"{_prefix}/{key}"
+            }));
+        var before = CorrectClockSkew.GetCorrectedUtcNowForEndpoint(endpoint.URL);
         var upload = await _storage.GetPresignedUploadUrlAsync(key, "text/plain", bytes.Length, TestContext.Current.CancellationToken);
-        upload.ExpiresAt.ShouldBeInRange(before.AddMinutes(5), DateTimeOffset.UtcNow.AddMinutes(5));
+        upload.ExpiresAt.ShouldBeInRange(
+            before.AddMinutes(5), CorrectClockSkew.GetCorrectedUtcNowForEndpoint(endpoint.URL).AddMinutes(5));
         new Uri(upload.Url).Scheme.ShouldBe(Uri.UriSchemeHttp);
         await Should.ThrowAsync<FileNotFoundException>(() => _storage.DownloadAsync(key, TestContext.Current.CancellationToken));
         using var request = new HttpRequestMessage(HttpMethod.Put, upload.Url) { Content = new ByteArrayContent(bytes) };
@@ -295,6 +303,121 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
         using var response = await http.GetAsync(download.Url, TestContext.Current.CancellationToken);
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    [Theory(DisplayName = "Versioned uploads retain metadata and serve exact versions after replacement and deletion")]
+    [InlineData(0)]
+    [InlineData(3)]
+    [InlineData(17 * 1024 * 1024)]
+    public async Task VersionedRoundTrip_Should_RetainVersions_When_CurrentContentChanges(int size)
+    {
+        var token = TestContext.Current.CancellationToken;
+        var bytes = new byte[size];
+        RandomNumberGenerator.Fill(bytes);
+        using var firstContent = new MemoryStream(bytes);
+        var first = await _storage.UploadAsync(
+            "versioned.bin", firstContent, "application/octet-stream",
+            new Dictionary<string, string> { ["operation-id"] = "first" }, token);
+        first.VersionId.ShouldNotBeNullOrWhiteSpace();
+        using var secondContent = new MemoryStream([4, 5, 6, 7]);
+        var second = await _storage.UploadAsync(
+            "versioned.bin", secondContent, "application/octet-stream",
+            new Dictionary<string, string> { ["operation-id"] = "second" }, token);
+        second.VersionId.ShouldNotBeNullOrWhiteSpace();
+        second.VersionId.ShouldNotBe(first.VersionId);
+        using var neighbor = new MemoryStream([9]);
+        await _storage.UploadAsync("versioned.bin-neighbor", neighbor, "text/plain", token);
+
+        var metadata = await _storage.GetMetadataAsync("versioned.bin", first.VersionId!, token);
+
+        metadata.ShouldNotBeNull();
+        metadata.VersionId.ShouldBe(first.VersionId);
+        metadata.Size.ShouldBe(size);
+        metadata.Metadata["operation-id"].ShouldBe("first");
+        (await _storage.GetMetadataAsync("versioned.bin", token))!.VersionId.ShouldBe(second.VersionId);
+        await using (var oldContent = await _storage.DownloadAsync("versioned.bin", first.VersionId!, token))
+        {
+            (await SHA256.HashDataAsync(oldContent, token)).ShouldBe(SHA256.HashData(bytes));
+        }
+        var versions = new List<string>();
+        await foreach (var version in _storage.GetVersionsAsync("versioned.bin", token))
+        {
+            versions.Add(version.VersionId);
+            version.LastModified.ShouldBeGreaterThan(DateTimeOffset.UtcNow.AddMinutes(-5));
+        }
+        versions.Order().ShouldBe(new[] { first.VersionId, second.VersionId }.Order());
+        await _storage.DeleteAsync("versioned.bin", token);
+        (await _storage.GetMetadataAsync("versioned.bin", token)).ShouldBeNull();
+        var historical = new List<string>();
+        await foreach (var version in _storage.GetVersionsAsync("versioned.bin", token))
+        {
+            historical.Add(version.VersionId);
+        }
+        historical.Order().ShouldBe(versions.Order());
+        var url = await _storage.GetPresignedDownloadUrlAsync(
+            "versioned.bin", first.VersionId!, "original.bin", "application/octet-stream", token);
+        using var client = new HttpClient();
+        using var downloaded = await client.GetAsync(url.Url, token);
+        downloaded.EnsureSuccessStatusCode();
+        SHA256.HashData(await downloaded.Content.ReadAsByteArrayAsync(token)).ShouldBe(SHA256.HashData(bytes));
+        firstContent.CanRead.ShouldBeTrue();
+        secondContent.CanRead.ShouldBeTrue();
+    }
+
+    [Fact(DisplayName = "Identical bytes produce independent versions with independent operation metadata")]
+    public async Task UploadAsync_Should_IdentifyEachAttempt_When_BytesAreIdentical()
+    {
+        var token = TestContext.Current.CancellationToken;
+        using var content = new MemoryStream([1, 2, 3]);
+        var first = await _storage.UploadAsync(
+            "identical.bin", content, "text/plain",
+            new Dictionary<string, string> { ["operation-id"] = "first" }, token);
+        content.Position = 0;
+
+        var second = await _storage.UploadAsync(
+            "identical.bin", content, "text/plain",
+            new Dictionary<string, string> { ["operation-id"] = "second" }, token);
+
+        first.VersionId.ShouldNotBeNullOrWhiteSpace();
+        second.VersionId.ShouldNotBeNullOrWhiteSpace();
+        second.VersionId.ShouldNotBe(first.VersionId);
+        var earlier = await _storage.GetMetadataAsync("identical.bin", first.VersionId!, token);
+        earlier.ShouldNotBeNull();
+        earlier.Metadata["operation-id"].ShouldBe("first");
+        var current = await _storage.GetMetadataAsync("identical.bin", second.VersionId!, token);
+        current.ShouldNotBeNull();
+        current.Metadata["operation-id"].ShouldBe("second");
+    }
+
+    [Fact(DisplayName = "Missing versions do not fall back to existing current content")]
+    public async Task VersionReads_Should_ReportMissing_When_RequestedVersionWasPermanentlyDeleted()
+    {
+        var token = TestContext.Current.CancellationToken;
+        using var firstContent = new MemoryStream("first"u8.ToArray());
+        var first = await _storage.UploadAsync(
+            "missing-version.txt", firstContent, "text/plain", new Dictionary<string, string>(), token);
+        using var secondContent = new MemoryStream("second"u8.ToArray());
+        var second = await _storage.UploadAsync(
+            "missing-version.txt", secondContent, "text/plain", new Dictionary<string, string>(), token);
+        first.VersionId.ShouldNotBeNullOrWhiteSpace();
+        await _client.DeleteObjectAsync(new DeleteObjectRequest
+        {
+            BucketName = SeaweedFsContainerFixture.BucketName,
+            Key = $"{_prefix}/missing-version.txt",
+            VersionId = first.VersionId
+        }, token);
+
+        var missing = await _storage.GetMetadataAsync("missing-version.txt", first.VersionId!, token);
+
+        missing.ShouldBeNull();
+        await Should.ThrowAsync<FileNotFoundException>(() =>
+            _storage.DownloadAsync("missing-version.txt", first.VersionId!, token));
+        (await ReadTextAsync(_storage, "missing-version.txt")).ShouldBe("second");
+        (await _storage.GetMetadataAsync("missing-version.txt", token))!.VersionId.ShouldBe(second.VersionId);
+        await foreach (var version in _storage.GetVersionsAsync("absent", token))
+        {
+            Assert.Fail($"An absent key returned version {version.VersionId}.");
+        }
     }
 
     public async ValueTask DisposeAsync()

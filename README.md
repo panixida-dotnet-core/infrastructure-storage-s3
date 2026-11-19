@@ -22,7 +22,9 @@ Applications own file keys, metadata, authorization, and database coordination.
 ## Features
 
 - Stream upload, download, and idempotent deletion.
-- Stored content type, size, and version queries without downloading content.
+- Stored content type, size, caller metadata, and version queries without downloading content.
+- Metadata-bearing uploads with the exact uploaded version returned by S3.
+- Streams and signed download URLs pinned to a specific version, plus lazy version enumeration.
 - Multipart uploads and parallel ranged downloads through the AWS SDK TransferUtility.
 - Presigned PUT and GET URLs with configurable expiration.
 - Optional key prefix for separating environments in one bucket.
@@ -86,16 +88,59 @@ public sealed class FileContentService(IFileStorage storage)
 ### Stored metadata
 
 Call `IFileStorage.GetMetadataAsync(key, cancellationToken)` to read a stored object's
-content type, size, and version identifier using an S3 HEAD request. It returns
-`FileMetadata` with `ContentType`, a `long Size` in bytes, and optional `VersionId`,
+content type, size, caller metadata, and version identifier using an S3 HEAD request. It returns
+`FileMetadata` with `ContentType`, a `long Size` in bytes, required `Metadata`, and optional `VersionId`,
 or `null` when S3 responds with HTTP 404, regardless of its error code. Size includes
 zero for empty objects. `VersionId` is passed through unchanged from S3 and is `null`
 when the response omits it. Enable bucket versioning to identify replacement uploads.
 The configured bucket and key prefix are applied in the same way as for uploads.
-Stored values still require application validation.
+Metadata names omit the `x-amz-meta-` prefix and support case-insensitive lookup.
+Objects without caller metadata return an empty dictionary. Stored values still require application validation.
 
 Other storage failures propagate. The request honors cancellation and does not
 download file content.
+
+### Versioned content
+
+Enable bucket versioning when replacements must remain independently readable.
+The metadata overload of `UploadAsync` returns the `VersionId` from that upload's
+S3 response, including multipart completion; it does not perform a subsequent HEAD
+to guess which upload is current. The identifier remains `null` when S3 omits it.
+
+```csharp
+var uploaded = await storage.UploadAsync(
+    key, content, "application/octet-stream",
+    new Dictionary<string, string> { ["operation-id"] = operationId },
+    cancellationToken);
+var versionId = uploaded.VersionId
+    ?? throw new InvalidOperationException("Storage did not report an uploaded version.");
+
+var metadata = await storage.GetMetadataAsync(key, versionId, cancellationToken);
+await using var versionContent = await storage.DownloadAsync(key, versionId, cancellationToken);
+var download = await storage.GetPresignedDownloadUrlAsync(
+    key, versionId, "file.bin", "application/octet-stream", cancellationToken);
+
+await foreach (var version in storage.GetVersionsAsync(key, cancellationToken))
+{
+    // Inspect this exact version's metadata when identifying an earlier upload.
+    var stored = await storage.GetMetadataAsync(key, version.VersionId, cancellationToken);
+}
+```
+
+Pass metadata names without provider prefixes. Null names/values, duplicate names
+ignoring case, prefixed names, and malformed HTTP headers are rejected before upload.
+The adapter does not interpret metadata values.
+
+Version identifiers are opaque, including S3's literal `"null"` identifier. Version
+reads never fall back to current content: a missing version yields `null` for
+metadata or `FileNotFoundException` for streams. Version-bound URLs remain pinned
+after a newer upload. Ranged-download fallback also retains the requested version.
+
+`GetVersionsAsync` follows both S3 pagination markers lazily and returns only content
+versions of the exact prefixed key. It excludes deletion markers and similarly named
+objects, includes historical content after deletion, and does not guarantee ordering.
+Listings do not contain caller metadata; use version-specific HEAD requests to inspect it.
+Version listing needs `s3:ListBucketVersions`; historical reads need `s3:GetObjectVersion`.
 
 ### Direct client transfers
 
@@ -216,7 +261,8 @@ dotnet test --configuration Release
 Unit tests cover validation, SDK request mapping, error handling, cancellation,
 and registration. Integration tests require Docker and start
 [SeaweedFS](https://github.com/seaweedfs/seaweedfs) `4.48` through Testcontainers.
-They exercise real S3 requests, prefixes, presigned HTTP uploads and downloads,
+The test bucket has versioning enabled. Tests exercise real S3 requests, prefixes,
+metadata, historical version reads and listing, presigned HTTP uploads and downloads,
 and rejection of modified signed requests. Transfer tests verify single PUT below
 the 16 MiB threshold, multipart requests at and above it, ranged downloads exceeding
 the part buffer limit, and SHA-256 hashes for small and large files. Each test uses a unique
@@ -257,7 +303,8 @@ Nerdbank.GitVersioning generates package versions.
 | `AddS3FileStorage` | `PANiXiDA.Core.Infrastructure.Storage.S3.DependencyInjection` | Registers scoped `IFileStorage`, singleton AWS client and transfer utility, and validated options. |
 | `S3StorageOptions` | `PANiXiDA.Core.Infrastructure.Storage.S3.Configuration` | Configures bucket, prefix, credentials, download buffering, and URL lifetime. |
 | `IFileStorage` | `PANiXiDA.Core.Application.Storage` | Application contract for stream operations, metadata queries and presigned URLs, provided by Core.Application. |
-| `FileMetadata` | `PANiXiDA.Core.Application.Storage.Models` | Stored content type, byte size, and optional version identifier returned by metadata queries. |
+| `FileMetadata` | `PANiXiDA.Core.Application.Storage.Models` | Stored content type, byte size, caller metadata, and optional version identifier. |
+| `FileUploadResult` / `FileVersion` | `PANiXiDA.Core.Application.Storage.Models` | Uploaded version identity and enumerated content version descriptors. |
 | `PresignedUploadUrl` / `PresignedDownloadUrl` | `PANiXiDA.Core.Application.Storage.Models` | URL results provided by Core.Application. |
 
 ### Storage behavior
@@ -271,8 +318,10 @@ must enforce any required isolation.
 Uploads read from the stream's current position, leave it open, and replace existing
 content at the same key. The caller disposes download streams and passes cancellation
 tokens to subsequent reads. Downloading a missing object raises `FileNotFoundException`;
-other storage failures propagate. Deleting an absent object succeeds.
-`UploadAsync` and `DeleteAsync` validate arguments synchronously
+other storage failures propagate. Deleting an absent object succeeds. With bucket versioning
+enabled, `DeleteAsync` creates a delete marker; historical versions and their version-bound
+URLs remain available until those versions are removed by S3 lifecycle or explicit version deletion.
+The basic `UploadAsync` overload and `DeleteAsync` validate arguments synchronously
 before returning the SDK task.
 
 Downloads use parallel HTTP Range requests. The product of `DownloadPartSizeBytes`
