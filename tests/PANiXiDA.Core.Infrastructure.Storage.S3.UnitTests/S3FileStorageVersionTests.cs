@@ -440,6 +440,43 @@ public sealed class S3FileStorageVersionTests
             Arg.Any<ListVersionsRequest>(), Arg.Is<CancellationToken>(token => token.IsCancellationRequested));
     }
 
+    [Fact(DisplayName = "Disposing an unstarted version enumeration does not contact storage")]
+    public async Task GetVersionsAsync_Should_AvoidRequests_When_DisposedBeforeEnumeration()
+    {
+        var storage = CreateStorage();
+        var versions = storage.GetVersionsAsync("file", TestContext.Current.CancellationToken)
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+        await versions.DisposeAsync();
+
+        await _client.DidNotReceive().ListVersionsAsync(
+            Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact(DisplayName = "Independent consumers of a version sequence keep separate request state")]
+    public async Task GetVersionsAsync_Should_KeepIndependentState_When_SequenceHasTwoConsumers()
+    {
+        var storage = CreateStorage();
+        _client.ListVersionsAsync(Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ListVersionsResponse
+            {
+                Versions = [Version("development/file", "first", DateTime.UtcNow)]
+            });
+        var sequence = storage.GetVersionsAsync("file", TestContext.Current.CancellationToken);
+        await using var first = sequence.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await using var second = sequence.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+        (await first.MoveNextAsync()).ShouldBeTrue();
+        (await second.MoveNextAsync()).ShouldBeTrue();
+
+        first.Current.VersionId.ShouldBe("first");
+        second.Current.VersionId.ShouldBe("first");
+        (await first.MoveNextAsync()).ShouldBeFalse();
+        (await second.MoveNextAsync()).ShouldBeFalse();
+        await _client.Received(2).ListVersionsAsync(
+            Arg.Any<ListVersionsRequest>(), TestContext.Current.CancellationToken);
+    }
+
     [Fact(DisplayName = "Version listing preserves provider failures")]
     public async Task GetVersionsAsync_Should_PropagateFailure_When_StorageIsUnavailable()
     {
