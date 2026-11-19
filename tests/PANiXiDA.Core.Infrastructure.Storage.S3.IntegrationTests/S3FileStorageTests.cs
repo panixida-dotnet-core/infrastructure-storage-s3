@@ -4,8 +4,10 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using Amazon.Runtime;
+using Amazon.Runtime.Endpoints;
 using Amazon.S3;
 using Amazon.S3.Model;
+using Amazon.Util;
 using Microsoft.Extensions.DependencyInjection;
 using PANiXiDA.Core.Application.Storage;
 using PANiXiDA.Core.Infrastructure.Storage.S3.IntegrationTests.Infrastructure;
@@ -232,9 +234,16 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
     {
         using var http = new HttpClient();
         var bytes = Encoding.UTF8.GetBytes(text);
-        var before = DateTimeOffset.UtcNow;
+        var endpoint = _client.Config.DetermineServiceOperationEndpoint(
+            new ServiceOperationEndpointParameters(new GetPreSignedUrlRequest
+            {
+                BucketName = SeaweedFsContainerFixture.BucketName,
+                Key = $"{_prefix}/{key}"
+            }));
+        var before = CorrectClockSkew.GetCorrectedUtcNowForEndpoint(endpoint.URL);
         var upload = await _storage.GetPresignedUploadUrlAsync(key, "text/plain", bytes.Length, TestContext.Current.CancellationToken);
-        upload.ExpiresAt.ShouldBeInRange(before.AddMinutes(5), DateTimeOffset.UtcNow.AddMinutes(5));
+        upload.ExpiresAt.ShouldBeInRange(
+            before.AddMinutes(5), CorrectClockSkew.GetCorrectedUtcNowForEndpoint(endpoint.URL).AddMinutes(5));
         new Uri(upload.Url).Scheme.ShouldBe(Uri.UriSchemeHttp);
         await Should.ThrowAsync<FileNotFoundException>(() => _storage.DownloadAsync(key, TestContext.Current.CancellationToken));
         using var request = new HttpRequestMessage(HttpMethod.Put, upload.Url) { Content = new ByteArrayContent(bytes) };

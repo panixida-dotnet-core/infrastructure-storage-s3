@@ -330,7 +330,7 @@ public sealed class S3FileStorageVersionTests
             });
 
         await using var versions = storage.GetVersionsAsync("file", TestContext.Current.CancellationToken)
-            .GetAsyncEnumerator();
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken);
         (await versions.MoveNextAsync()).ShouldBeTrue();
 
         await _client.Received(1).ListVersionsAsync(Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>());
@@ -383,7 +383,7 @@ public sealed class S3FileStorageVersionTests
     public async Task GetVersionsAsync_Should_Stop_When_CancellationIsRequested(bool beforeStart)
     {
         var storage = CreateStorage();
-        using var cancellation = new CancellationTokenSource();
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         _client.ListVersionsAsync(Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>())
             .Returns(new ListVersionsResponse
             {
@@ -397,7 +397,7 @@ public sealed class S3FileStorageVersionTests
         {
             await cancellation.CancelAsync();
         }
-        await using var versions = storage.GetVersionsAsync("file", cancellation.Token).GetAsyncEnumerator();
+        await using var versions = storage.GetVersionsAsync("file", cancellation.Token).GetAsyncEnumerator(TestContext.Current.CancellationToken);
         if (!beforeStart)
         {
             (await versions.MoveNextAsync()).ShouldBeTrue();
