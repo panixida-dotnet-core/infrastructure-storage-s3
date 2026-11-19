@@ -414,7 +414,8 @@ public sealed class S3FileStorageVersionTests
     [Theory(DisplayName = "Version enumeration combines request and consumer cancellation tokens")]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GetVersionsAsync_Should_CombineTokens_When_ConsumerSuppliesAnotherToken(bool cancelRequest)
+    [InlineData(null)]
+    public async Task GetVersionsAsync_Should_CombineTokens_When_ConsumerSuppliesAnotherToken(bool? cancelRequest)
     {
         var storage = CreateStorage();
         using var requestCancellation =
@@ -434,11 +435,23 @@ public sealed class S3FileStorageVersionTests
             .GetAsyncEnumerator(consumerCancellation.Token);
         (await versions.MoveNextAsync()).ShouldBeTrue();
 
-        await (cancelRequest ? requestCancellation : consumerCancellation).CancelAsync();
+        if (cancelRequest is { } cancelInitialRequest)
+        {
+            await (cancelInitialRequest ? requestCancellation : consumerCancellation).CancelAsync();
 
-        await Should.ThrowAsync<OperationCanceledException>(() => versions.MoveNextAsync().AsTask());
+            await Should.ThrowAsync<OperationCanceledException>(() => versions.MoveNextAsync().AsTask());
+        }
+        else
+        {
+            (await versions.MoveNextAsync()).ShouldBeTrue();
+            versions.Current.VersionId.ShouldBe("second");
+            (await versions.MoveNextAsync()).ShouldBeFalse();
+        }
+
         await _client.Received(1).ListVersionsAsync(
-            Arg.Any<ListVersionsRequest>(), Arg.Is<CancellationToken>(token => token.IsCancellationRequested));
+            Arg.Any<ListVersionsRequest>(),
+            Arg.Is<CancellationToken>(token =>
+                token.CanBeCanceled && token.IsCancellationRequested == cancelRequest.HasValue));
     }
 
     [Fact(DisplayName = "Disposing an unstarted version enumeration does not contact storage")]
