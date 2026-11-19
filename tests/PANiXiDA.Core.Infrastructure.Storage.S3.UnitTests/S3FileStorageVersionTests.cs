@@ -500,6 +500,33 @@ public sealed class S3FileStorageVersionTests
         }
     }
 
+    [Fact(DisplayName = "A version sequence can be consumed on a different thread from its creation")]
+    public async Task GetVersionsAsync_Should_Enumerate_When_ConsumedOnAnotherThread()
+    {
+        var storage = CreateStorage();
+        _client.ListVersionsAsync(Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ListVersionsResponse
+            {
+                Versions = [Version("development/file", "first", DateTime.UtcNow)]
+            });
+        var sequence = storage.GetVersionsAsync("file", TestContext.Current.CancellationToken);
+        var creationThread = Environment.CurrentManagedThreadId;
+
+        var versions = await Task.Factory.StartNew(
+            () =>
+            {
+                Environment.CurrentManagedThreadId.ShouldNotBe(creationThread);
+                return CollectAsync(sequence);
+            },
+            TestContext.Current.CancellationToken,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap();
+
+        versions.ShouldHaveSingleItem().VersionId.ShouldBe("first");
+        await _client.Received(1).ListVersionsAsync(
+            Arg.Any<ListVersionsRequest>(), TestContext.Current.CancellationToken);
+    }
+
     [Fact(DisplayName = "Version listing preserves provider failures")]
     public async Task GetVersionsAsync_Should_PropagateFailure_When_StorageIsUnavailable()
     {
