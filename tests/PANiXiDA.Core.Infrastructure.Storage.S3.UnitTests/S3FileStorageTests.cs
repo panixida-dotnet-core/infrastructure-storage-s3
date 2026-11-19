@@ -123,13 +123,14 @@ public sealed class S3FileStorageTests
         }
     }
 
-    [Theory(DisplayName = "Metadata queries return stored type and byte size using the configured bucket and prefix")]
-    [InlineData("", "folder/File.txt", 0L)]
-    [InlineData("development", "development/folder/File.txt", 4_294_967_296L)]
-    public async Task Metadata(string prefix, string expectedKey, long size)
+    [Theory(DisplayName = "Metadata queries return stored type, byte size, and version using the configured bucket and prefix")]
+    [InlineData("", "folder/File.txt", 0L, null)]
+    [InlineData("development", "development/folder/File.txt", 4_294_967_296L, "opaque/version+id==")]
+    [InlineData("development", "development/folder/File.txt", 0L, "null")]
+    public async Task Metadata(string prefix, string expectedKey, long size, string? versionId)
     {
         var storage = CreateStorage(prefix);
-        var response = new GetObjectMetadataResponse { ContentLength = size };
+        var response = new GetObjectMetadataResponse { ContentLength = size, VersionId = versionId };
         response.Headers.ContentType = "text/plain";
         _client.GetObjectMetadataAsync(Arg.Any<GetObjectMetadataRequest>(), Arg.Any<CancellationToken>())
             .Returns(response);
@@ -139,6 +140,7 @@ public sealed class S3FileStorageTests
         result.ShouldNotBeNull();
         result.ContentType.ShouldBe("text/plain");
         result.Size.ShouldBe(size);
+        result.VersionId.ShouldBe(versionId);
         await _client.Received(1).GetObjectMetadataAsync(Arg.Is<GetObjectMetadataRequest>(request =>
             request.BucketName == "files" && request.Key == expectedKey), TestContext.Current.CancellationToken);
         await _client.DidNotReceive().GetObjectAsync(Arg.Any<GetObjectRequest>(), Arg.Any<CancellationToken>());
