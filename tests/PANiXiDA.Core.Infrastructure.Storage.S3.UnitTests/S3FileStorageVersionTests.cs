@@ -473,6 +473,8 @@ public sealed class S3FileStorageVersionTests
         second.Current.VersionId.ShouldBe("first");
         (await first.MoveNextAsync()).ShouldBeFalse();
         (await second.MoveNextAsync()).ShouldBeFalse();
+        (await first.MoveNextAsync()).ShouldBeFalse();
+        (await second.MoveNextAsync()).ShouldBeFalse();
         await _client.Received(2).ListVersionsAsync(
             Arg.Any<ListVersionsRequest>(), TestContext.Current.CancellationToken);
     }
