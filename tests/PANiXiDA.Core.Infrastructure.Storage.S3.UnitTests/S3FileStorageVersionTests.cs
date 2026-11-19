@@ -410,6 +410,36 @@ public sealed class S3FileStorageVersionTests
             Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>());
     }
 
+    [Theory(DisplayName = "Version enumeration combines request and consumer cancellation tokens")]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetVersionsAsync_Should_CombineTokens_When_ConsumerSuppliesAnotherToken(bool cancelRequest)
+    {
+        var storage = CreateStorage();
+        using var requestCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        using var consumerCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        _client.ListVersionsAsync(Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ListVersionsResponse
+            {
+                Versions =
+                [
+                    Version("development/file", "first", DateTime.UtcNow),
+                    Version("development/file", "second", DateTime.UtcNow)
+                ]
+            });
+        await using var versions = storage.GetVersionsAsync("file", requestCancellation.Token)
+            .GetAsyncEnumerator(consumerCancellation.Token);
+        (await versions.MoveNextAsync()).ShouldBeTrue();
+
+        await (cancelRequest ? requestCancellation : consumerCancellation).CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => versions.MoveNextAsync().AsTask());
+        await _client.Received(1).ListVersionsAsync(
+            Arg.Any<ListVersionsRequest>(), Arg.Is<CancellationToken>(token => token.IsCancellationRequested));
+    }
+
     [Fact(DisplayName = "Version listing preserves provider failures")]
     public async Task GetVersionsAsync_Should_PropagateFailure_When_StorageIsUnavailable()
     {
