@@ -1,4 +1,5 @@
 using Amazon.S3;
+using Amazon.S3.Model;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.Configuration;
@@ -28,6 +29,13 @@ public sealed class SeaweedFsContainerFixture : IAsyncLifetime
         await using var services = CreateServices("readiness");
         var response = await services.GetRequiredService<IAmazonS3>().ListBucketsAsync(TestContext.Current.CancellationToken);
         response.Buckets.ShouldContain(bucket => bucket.BucketName == BucketName);
+        await services.GetRequiredService<IAmazonS3>().PutBucketVersioningAsync(
+            new PutBucketVersioningRequest
+            {
+                BucketName = BucketName,
+                VersioningConfig = new S3BucketVersioningConfig { Status = VersionStatus.Enabled }
+            },
+            TestContext.Current.CancellationToken);
     }
 
     public async ValueTask DisposeAsync()
