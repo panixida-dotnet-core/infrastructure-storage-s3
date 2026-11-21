@@ -568,6 +568,41 @@ public sealed class S3FileStorageVersionTests
             Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>());
     }
 
+    [Theory(DisplayName = "Version enumeration accepts a default request token and uses consumer cancellation")]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetVersionsAsync_Should_UseConsumerToken_When_RequestTokenIsDefault(bool cancellableConsumer)
+    {
+        var storage = CreateStorage();
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var consumerToken = cancellableConsumer ? cancellation.Token : CancellationToken.None;
+        _client.ListVersionsAsync(Arg.Any<ListVersionsRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ListVersionsResponse
+            {
+                Versions =
+                [
+                    Version("development/file", "first", DateTime.UtcNow),
+                    Version("development/file", "second", DateTime.UtcNow)
+                ]
+            });
+        var sequence = storage.GetVersionsAsync("file", CancellationToken.None);
+        await using var versions = sequence.GetAsyncEnumerator(consumerToken);
+        (await versions.MoveNextAsync()).ShouldBeTrue();
+
+        if (cancellableConsumer)
+        {
+            await cancellation.CancelAsync();
+            await Should.ThrowAsync<OperationCanceledException>(() => versions.MoveNextAsync().AsTask());
+        }
+        else
+        {
+            (await versions.MoveNextAsync()).ShouldBeTrue();
+            (await versions.MoveNextAsync()).ShouldBeFalse();
+        }
+
+        await _client.Received(1).ListVersionsAsync(Arg.Any<ListVersionsRequest>(), consumerToken);
+    }
+
     private static S3ObjectVersion Version(string key, string versionId, DateTime modified)
     {
         return new S3ObjectVersion { Key = key, VersionId = versionId, LastModified = modified };
