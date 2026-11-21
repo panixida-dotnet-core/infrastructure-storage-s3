@@ -9,6 +9,7 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.DependencyInjection;
 using PANiXiDA.Core.Application.Storage;
+using PANiXiDA.Core.Application.Storage.Constants;
 using PANiXiDA.Core.Infrastructure.Storage.S3.IntegrationTests.Infrastructure;
 
 namespace PANiXiDA.Core.Infrastructure.Storage.S3.IntegrationTests;
@@ -418,6 +419,88 @@ public sealed class S3FileStorageTests : IClassFixture<SeaweedFsContainerFixture
         {
             Assert.Fail($"An absent key returned version {version.VersionId}.");
         }
+    }
+
+    [Theory(DisplayName = "Copy preserves the requested source version and deletion removes only its exact version")]
+    [InlineData("source.txt", "old content")]
+    [InlineData("папка/файл + %23.txt", "данные")]
+    [InlineData("empty.txt", "")]
+    public async Task CopyAsync_Should_PreserveVersions_When_ContentIsRelocated(string sourceKey, string text)
+    {
+        var token = TestContext.Current.CancellationToken;
+        var bytes = Encoding.UTF8.GetBytes(text);
+        using var original = new MemoryStream(bytes);
+        var source = await _storage.UploadAsync(sourceKey, original, "text/plain",
+            new Dictionary<string, string> { ["source-only"] = "original" }, token);
+        using var replacement = new MemoryStream("latest"u8.ToArray());
+        var current = await _storage.UploadAsync(sourceKey, replacement, "application/octet-stream",
+            new Dictionary<string, string>(), token);
+        const string destinationKey = "destination/файл + %.txt";
+        using var earlierDestination = new MemoryStream("previous"u8.ToArray());
+        var previous = await _storage.UploadAsync(destinationKey, earlierDestination, "text/plain",
+            new Dictionary<string, string>(), token);
+        var requests = new ConcurrentQueue<AmazonWebServiceRequest>();
+        _client.ShouldBeOfType<AmazonS3Client>().BeforeRequestEvent += (_, args) =>
+        {
+            if (args is WebServiceRequestEventArgs requestArgs)
+            {
+                requests.Enqueue(requestArgs.Request);
+            }
+        };
+
+        var copied = await _storage.CopyAsync(
+            sourceKey, source.VersionId!, destinationKey, "text/plain", bytes.LongLength,
+            new Dictionary<string, string> { [FileMetadataNames.RelocationAttemptId] = "attempt-1" }, token);
+
+        copied.VersionId.ShouldNotBeNullOrWhiteSpace();
+        copied.VersionId.ShouldNotBe(source.VersionId);
+        copied.VersionId.ShouldNotBe(previous.VersionId);
+        var request = requests.ShouldHaveSingleItem().ShouldBeOfType<CopyObjectRequest>();
+        request.SourceKey.ShouldBe($"{_prefix}/{sourceKey}");
+        request.SourceVersionId.ShouldBe(source.VersionId);
+        request.DestinationKey.ShouldBe($"{_prefix}/{destinationKey}");
+        var metadata = await _storage.GetMetadataAsync(destinationKey, copied.VersionId!, token);
+        metadata.ShouldNotBeNull();
+        metadata.VersionId.ShouldBe(copied.VersionId);
+        metadata.ContentType.ShouldBe("text/plain");
+        metadata.Size.ShouldBe(bytes.LongLength);
+        metadata.Metadata.Count.ShouldBe(1);
+        metadata.Metadata[FileMetadataNames.RelocationAttemptId].ShouldBe("attempt-1");
+        await using (var downloaded = await _storage.DownloadAsync(destinationKey, copied.VersionId!, token))
+        {
+            (await SHA256.HashDataAsync(downloaded, token)).ShouldBe(SHA256.HashData(bytes));
+        }
+        (await _storage.GetMetadataAsync(sourceKey, source.VersionId!, token)).ShouldNotBeNull();
+        (await _storage.GetMetadataAsync(sourceKey, token))!.VersionId.ShouldBe(current.VersionId);
+        await _storage.DeleteAsync(sourceKey, source.VersionId!, token);
+        await _storage.DeleteAsync(sourceKey, source.VersionId!, token);
+        (await _storage.GetMetadataAsync(sourceKey, source.VersionId!, token)).ShouldBeNull();
+        (await _storage.GetMetadataAsync(sourceKey, token))!.VersionId.ShouldBe(current.VersionId);
+        (await ReadTextAsync(_storage, sourceKey)).ShouldBe("latest");
+        (await _storage.GetMetadataAsync(destinationKey, copied.VersionId!, token)).ShouldNotBeNull();
+        await _storage.DeleteAsync(destinationKey, copied.VersionId!, token);
+        (await _storage.GetMetadataAsync(destinationKey, copied.VersionId!, token)).ShouldBeNull();
+        (await _storage.GetMetadataAsync(destinationKey, previous.VersionId!, token)).ShouldNotBeNull();
+        (await ReadTextAsync(_storage, destinationKey)).ShouldBe("previous");
+    }
+
+    [Fact(DisplayName = "Copying a missing source version never falls back to current source content")]
+    public async Task CopyAsync_Should_ReportMissingVersion_When_SourceVersionWasDeleted()
+    {
+        var token = TestContext.Current.CancellationToken;
+        using var original = new MemoryStream("original"u8.ToArray());
+        var source = await _storage.UploadAsync("source.txt", original, "text/plain",
+            new Dictionary<string, string>(), token);
+        using var replacement = new MemoryStream("current"u8.ToArray());
+        await _storage.UploadAsync("source.txt", replacement, "text/plain", token);
+        await _storage.DeleteAsync("source.txt", source.VersionId!, token);
+
+        await Should.ThrowAsync<AmazonS3Exception>(() => _storage.CopyAsync(
+            "source.txt", source.VersionId!, "destination.txt", "text/plain", original.Length,
+            new Dictionary<string, string>(), token));
+
+        (await _storage.GetMetadataAsync("destination.txt", token)).ShouldBeNull();
+        (await ReadTextAsync(_storage, "source.txt")).ShouldBe("current");
     }
 
     public async ValueTask DisposeAsync()

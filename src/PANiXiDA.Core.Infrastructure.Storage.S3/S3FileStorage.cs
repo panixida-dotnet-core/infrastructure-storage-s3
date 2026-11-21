@@ -23,6 +23,7 @@ internal sealed class S3FileStorage(
 {
     private const string NoSuchBucketErrorCode = "NoSuchBucket";
     private const string MetadataHeaderPrefix = "x-amz-meta-";
+    private const long MaximumCopySizeBytes = 5L * 1024 * 1024 * 1024;
 
     private readonly S3StorageOptions _options = options.Value;
 
@@ -123,6 +124,44 @@ internal sealed class S3FileStorage(
         } while (hasMorePages);
     }
 
+    public async Task<FileCopyResult> CopyAsync(
+        string sourceKey,
+        string sourceVersionId,
+        string destinationKey,
+        string contentType,
+        long size,
+        IReadOnlyDictionary<string, string> metadata,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceVersionId);
+        ValidateContentType(contentType);
+        ArgumentOutOfRangeException.ThrowIfNegative(size);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(size, MaximumCopySizeBytes);
+        ArgumentNullException.ThrowIfNull(metadata);
+        var sourceObjectKey = BuildObjectKey(sourceKey);
+        var destinationObjectKey = BuildObjectKey(destinationKey);
+        if (string.Equals(sourceObjectKey, destinationObjectKey, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("The destination key must differ from the source key.", nameof(destinationKey));
+        }
+
+        var request = new CopyObjectRequest
+        {
+            SourceBucket = _options.BucketName,
+            SourceKey = sourceObjectKey,
+            SourceVersionId = sourceVersionId,
+            DestinationBucket = _options.BucketName,
+            DestinationKey = destinationObjectKey,
+            ContentType = contentType,
+            MetadataDirective = S3MetadataDirective.REPLACE
+        };
+        AddMetadata(request.Metadata, metadata);
+
+        var response = await transferUtility.S3Client.CopyObjectAsync(request, cancellationToken);
+
+        return new FileCopyResult(response.VersionId);
+    }
+
     public Task DeleteAsync(
         string key,
         CancellationToken cancellationToken)
@@ -131,6 +170,19 @@ internal sealed class S3FileStorage(
         {
             BucketName = _options.BucketName,
             Key = BuildObjectKey(key)
+        }, cancellationToken);
+    }
+
+    public Task DeleteAsync(string key, string versionId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(versionId);
+        var objectKey = BuildObjectKey(key);
+
+        return transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
+        {
+            BucketName = _options.BucketName,
+            Key = objectKey,
+            VersionId = versionId
         }, cancellationToken);
     }
 
@@ -206,6 +258,15 @@ internal sealed class S3FileStorage(
             AutoCloseStream = false,
             AutoResetStreamPosition = false
         };
+        AddMetadata(request.Metadata, metadata);
+
+        return request;
+    }
+
+    private static void AddMetadata(
+        MetadataCollection destination,
+        IReadOnlyDictionary<string, string> metadata)
+    {
         using var headers = new HttpRequestMessage();
         foreach (var entry in metadata)
         {
@@ -215,16 +276,14 @@ internal sealed class S3FileStorage(
             {
                 throw new ArgumentException("Metadata names must omit the x-amz-meta- prefix.", nameof(metadata));
             }
-            if (request.Metadata[entry.Key] is not null)
+            if (destination[entry.Key] is not null)
             {
                 throw new ArgumentException("Metadata names must be unique ignoring case.", nameof(metadata));
             }
 
             headers.Headers.Add(MetadataHeaderPrefix + entry.Key, entry.Value);
-            request.Metadata.Add(entry.Key, entry.Value);
+            destination.Add(entry.Key, entry.Value);
         }
-
-        return request;
     }
 
     private async Task<Stream> DownloadVersionAsync(
