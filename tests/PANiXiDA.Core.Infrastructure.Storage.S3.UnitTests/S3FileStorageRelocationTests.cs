@@ -168,24 +168,29 @@ public sealed class S3FileStorageRelocationTests
         thrown.ShouldBeSameAs(failure);
     }
 
-    [Theory(DisplayName = "Cancelled relocation requests do not contact storage")]
+    [Theory(DisplayName = "Relocation operations pass cancellation to the SDK and propagate its cancellation")]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task RelocationOperations_Should_AvoidRequests_When_Cancelled(bool copy)
+    public async Task RelocationOperations_Should_PropagateCancellation_When_SdkCancels(bool copy)
     {
         var storage = CreateStorage();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         await cancellation.CancelAsync();
+        _client.CopyObjectAsync(Arg.Any<CopyObjectRequest>(), cancellation.Token)
+            .Returns(Task.FromCanceled<CopyObjectResponse>(cancellation.Token));
+        _client.DeleteObjectAsync(Arg.Any<DeleteObjectRequest>(), cancellation.Token)
+            .Returns(Task.FromCanceled<DeleteObjectResponse>(cancellation.Token));
 
-        await Should.ThrowAsync<OperationCanceledException>(() => copy
+        var failure = await Should.ThrowAsync<OperationCanceledException>(() => copy
             ? storage.CopyAsync("source", "version-1", "target", "text/plain", 4,
                 ReadOnlyDictionary<string, string>.Empty, cancellation.Token)
             : storage.DeleteAsync("file", "version-1", cancellation.Token));
 
-        await _client.DidNotReceive().CopyObjectAsync(
-            Arg.Any<CopyObjectRequest>(), Arg.Any<CancellationToken>());
-        await _client.DidNotReceive().DeleteObjectAsync(
-            Arg.Any<DeleteObjectRequest>(), Arg.Any<CancellationToken>());
+        failure.CancellationToken.ShouldBe(cancellation.Token);
+        await _client.Received(copy ? 1 : 0).CopyObjectAsync(
+            Arg.Any<CopyObjectRequest>(), cancellation.Token);
+        await _client.Received(copy ? 0 : 1).DeleteObjectAsync(
+            Arg.Any<DeleteObjectRequest>(), cancellation.Token);
     }
 
     private S3FileStorage CreateStorage()

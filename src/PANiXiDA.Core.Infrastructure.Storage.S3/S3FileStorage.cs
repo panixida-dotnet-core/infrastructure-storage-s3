@@ -156,7 +156,6 @@ internal sealed class S3FileStorage(
             MetadataDirective = S3MetadataDirective.REPLACE
         };
         AddMetadata(request.Metadata, metadata);
-        cancellationToken.ThrowIfCancellationRequested();
 
         var response = await transferUtility.S3Client.CopyObjectAsync(request, cancellationToken);
 
@@ -178,7 +177,6 @@ internal sealed class S3FileStorage(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(versionId);
         var objectKey = BuildObjectKey(key);
-        cancellationToken.ThrowIfCancellationRequested();
 
         return transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
         {
@@ -238,29 +236,6 @@ internal sealed class S3FileStorage(
         return CreateDownloadUrlAsync(key, versionId, fileName, contentType, cancellationToken);
     }
 
-    private static void AddMetadata(
-        MetadataCollection destination,
-        IReadOnlyDictionary<string, string> metadata)
-    {
-        using var headers = new HttpRequestMessage();
-        foreach (var entry in metadata)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(entry.Key);
-            ArgumentNullException.ThrowIfNull(entry.Value);
-            if (entry.Key.StartsWith(MetadataHeaderPrefix, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException("Metadata names must omit the x-amz-meta- prefix.", nameof(metadata));
-            }
-            if (destination[entry.Key] is not null)
-            {
-                throw new ArgumentException("Metadata names must be unique ignoring case.", nameof(metadata));
-            }
-
-            headers.Headers.Add(MetadataHeaderPrefix + entry.Key, entry.Value);
-            destination.Add(entry.Key, entry.Value);
-        }
-    }
-
     private TransferUtilityUploadRequest CreateUploadRequest(
         string key,
         Stream content,
@@ -286,6 +261,29 @@ internal sealed class S3FileStorage(
         AddMetadata(request.Metadata, metadata);
 
         return request;
+    }
+
+    private static void AddMetadata(
+        MetadataCollection destination,
+        IReadOnlyDictionary<string, string> metadata)
+    {
+        using var headers = new HttpRequestMessage();
+        foreach (var entry in metadata)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(entry.Key);
+            ArgumentNullException.ThrowIfNull(entry.Value);
+            if (entry.Key.StartsWith(MetadataHeaderPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("Metadata names must omit the x-amz-meta- prefix.", nameof(metadata));
+            }
+            if (destination[entry.Key] is not null)
+            {
+                throw new ArgumentException("Metadata names must be unique ignoring case.", nameof(metadata));
+            }
+
+            headers.Headers.Add(MetadataHeaderPrefix + entry.Key, entry.Value);
+            destination.Add(entry.Key, entry.Value);
+        }
     }
 
     private async Task<Stream> DownloadVersionAsync(
