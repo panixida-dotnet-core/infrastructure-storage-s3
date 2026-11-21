@@ -165,6 +165,75 @@ public sealed class S3FileStorageMultipartCopyTests
             Arg.Any<CompleteMultipartUploadRequest>(), Arg.Any<CancellationToken>());
     }
 
+    [Theory(DisplayName = "Multipart copy waits for provider responses and completes cleanup before reporting a failure")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CopyAsync_Should_AwaitProviderAndCleanup_When_ResponsesAreDelayed(bool failCompletion)
+    {
+        var storage = CreateStorage();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        var initiation = new TaskCompletionSource<InitiateMultipartUploadResponse>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var part = new TaskCompletionSource<CopyPartResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<CompleteMultipartUploadResponse>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var abort = new TaskCompletionSource<AbortMultipartUploadResponse>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var partStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var abortStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _client.InitiateMultipartUploadAsync(Arg.Any<InitiateMultipartUploadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(initiation.Task);
+        _client.CopyPartAsync(Arg.Any<CopyPartRequest>(), Arg.Any<CancellationToken>()).Returns(_ =>
+        {
+            partStarted.TrySetResult();
+            return part.Task;
+        });
+        _client.CompleteMultipartUploadAsync(Arg.Any<CompleteMultipartUploadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                completionStarted.SetResult();
+                return completion.Task;
+            });
+        _client.AbortMultipartUploadAsync(Arg.Any<AbortMultipartUploadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                abortStarted.SetResult();
+                return abort.Task;
+            });
+
+        var pending = storage.CopyAsync(
+            "source", "source-version", "target", "text/plain", SingleCopyLimit + 1,
+            ReadOnlyDictionary<string, string>.Empty, timeout.Token);
+        await _client.DidNotReceive().CopyPartAsync(Arg.Any<CopyPartRequest>(), Arg.Any<CancellationToken>());
+        initiation.SetResult(new InitiateMultipartUploadResponse { UploadId = "upload-id" });
+        await partStarted.Task.WaitAsync(timeout.Token);
+        pending.IsCompleted.ShouldBeFalse();
+        await _client.DidNotReceive().CompleteMultipartUploadAsync(
+            Arg.Any<CompleteMultipartUploadRequest>(), Arg.Any<CancellationToken>());
+        part.SetResult(new CopyPartResponse { ETag = "etag" });
+        await completionStarted.Task.WaitAsync(timeout.Token);
+        pending.IsCompleted.ShouldBeFalse();
+
+        if (failCompletion)
+        {
+            var failure = new AmazonS3Exception("Completion failed");
+            completion.SetException(failure);
+            await abortStarted.Task.WaitAsync(timeout.Token);
+            pending.IsCompleted.ShouldBeFalse();
+            abort.SetResult(new AbortMultipartUploadResponse());
+            (await Should.ThrowAsync<AmazonS3Exception>(() => pending)).ShouldBeSameAs(failure);
+        }
+        else
+        {
+            completion.SetResult(new CompleteMultipartUploadResponse { VersionId = "destination-version" });
+            (await pending.WaitAsync(timeout.Token)).VersionId.ShouldBe("destination-version");
+            await _client.DidNotReceive().AbortMultipartUploadAsync(
+                Arg.Any<AbortMultipartUploadRequest>(), Arg.Any<CancellationToken>());
+        }
+    }
+
     private S3FileStorage CreateStorage()
     {
         _client.Config.Returns(new AmazonS3Config { RegionEndpoint = RegionEndpoint.USEast1 });
