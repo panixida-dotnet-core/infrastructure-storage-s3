@@ -66,7 +66,8 @@ public sealed class S3FileStorageRelocationTests
             "prefixed-metadata" => new Dictionary<string, string> { ["x-amz-meta-operation"] = "attempt" },
             "duplicate-metadata" => new Dictionary<string, string>
             {
-                ["Operation"] = "one", ["operation"] = "two"
+                ["Operation"] = "one",
+                ["operation"] = "two"
             },
             _ => ReadOnlyDictionary<string, string>.Empty
         };
