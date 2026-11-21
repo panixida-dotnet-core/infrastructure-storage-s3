@@ -305,21 +305,23 @@ internal sealed class S3FileStorage(
         }
         catch (Exception copyException)
         {
-            using var cleanupCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try
+            using (var cleanupCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
             {
-                await transferUtility.S3Client.AbortMultipartUploadAsync(
-                    new AbortMultipartUploadRequest
-                    {
-                        BucketName = request.DestinationBucket,
-                        Key = request.DestinationKey,
-                        UploadId = initiated.UploadId
-                    }, cleanupCancellation.Token);
-            }
-            catch (Exception cleanupException)
-            {
-                throw new AggregateException(
-                    "Multipart copying and aborting its upload both failed.", copyException, cleanupException);
+                try
+                {
+                    await transferUtility.S3Client.AbortMultipartUploadAsync(
+                        new AbortMultipartUploadRequest
+                        {
+                            BucketName = request.DestinationBucket,
+                            Key = request.DestinationKey,
+                            UploadId = initiated.UploadId
+                        }, cleanupCancellation.Token);
+                }
+                catch (Exception cleanupException)
+                {
+                    throw new AggregateException(
+                        "Multipart copying and aborting its upload both failed.", copyException, cleanupException);
+                }
             }
 
             throw;
