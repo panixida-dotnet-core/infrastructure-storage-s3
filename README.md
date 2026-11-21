@@ -142,6 +142,23 @@ objects, includes historical content after deletion, and does not guarantee orde
 Listings do not contain caller metadata; use version-specific HEAD requests to inspect it.
 Version listing needs `s3:ListBucketVersions`; historical reads need `s3:GetObjectVersion`.
 
+### Copying and deleting specific versions
+
+`CopyAsync(sourceKey, sourceVersionId, destinationKey, contentType, size, metadata, cancellationToken)`
+uses a server-side S3 CopyObject request for the exact source version and returns the destination version.
+Both keys use the configured bucket and prefix. Source content remains intact; caller metadata is replaced.
+The source and destination keys must differ. Supply the actual source version size in bytes.
+Copies up to 5 GiB use CopyObject; larger copies use sequential multipart copying with the same
+source version pinned on every part. Part sizes grow to stay within 10,000 parts, up to 5 GiB per part.
+No source HEAD request or download is needed. Size does not resize or truncate the source.
+Failed or cancelled multipart copies attempt an abort with an independent 30-second cleanup token.
+If both copying and aborting fail, an AggregateException preserves both failures.
+
+`DeleteAsync(key, versionId, cancellationToken)` permanently removes only that version without a delete marker.
+Other versions remain available; deleting a current version can reveal an older version.
+Copy and deletion failures propagate, and cancelled requests may already have completed at S3.
+Required permissions include `s3:GetObjectVersion`, `s3:PutObject`, and `s3:DeleteObjectVersion`.
+
 ### Direct client transfers
 
 For browser or other direct clients, authorize the operation and generate a
@@ -304,7 +321,7 @@ Nerdbank.GitVersioning generates package versions.
 | `S3StorageOptions` | `PANiXiDA.Core.Infrastructure.Storage.S3.Configuration` | Configures bucket, prefix, credentials, download buffering, and URL lifetime. |
 | `IFileStorage` | `PANiXiDA.Core.Application.Storage` | Application contract for stream operations, metadata queries and presigned URLs, provided by Core.Application. |
 | `FileMetadata` | `PANiXiDA.Core.Application.Storage.Models` | Stored content type, byte size, caller metadata, and optional version identifier. |
-| `FileUploadResult` / `FileVersion` | `PANiXiDA.Core.Application.Storage.Models` | Uploaded version identity and enumerated content version descriptors. |
+| `FileUploadResult` / `FileCopyResult` / `FileVersion` | `PANiXiDA.Core.Application.Storage.Models` | Uploaded/copied version identities and enumerated content version descriptors. |
 | `PresignedUploadUrl` / `PresignedDownloadUrl` | `PANiXiDA.Core.Application.Storage.Models` | URL results provided by Core.Application. |
 
 ### Storage behavior

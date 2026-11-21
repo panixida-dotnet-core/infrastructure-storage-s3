@@ -23,6 +23,9 @@ internal sealed class S3FileStorage(
 {
     private const string NoSuchBucketErrorCode = "NoSuchBucket";
     private const string MetadataHeaderPrefix = "x-amz-meta-";
+    private const long MaximumCopyPartSizeBytes = 5L * 1024 * 1024 * 1024;
+    private const long MinimumCopyPartSizeBytes = 64L * 1024 * 1024;
+    private const int MaximumCopyParts = 10_000;
 
     private readonly S3StorageOptions _options = options.Value;
 
@@ -123,6 +126,52 @@ internal sealed class S3FileStorage(
         } while (hasMorePages);
     }
 
+    public async Task<FileCopyResult> CopyAsync(
+        string sourceKey,
+        string sourceVersionId,
+        string destinationKey,
+        string contentType,
+        long size,
+        IReadOnlyDictionary<string, string> metadata,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceVersionId);
+        ValidateContentType(contentType);
+        ArgumentOutOfRangeException.ThrowIfNegative(size);
+        if (size > MaximumCopyPartSizeBytes * MaximumCopyParts)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size), "The size exceeds S3 multipart copy limits.");
+        }
+        ArgumentNullException.ThrowIfNull(metadata);
+        var sourceObjectKey = BuildObjectKey(sourceKey);
+        var destinationObjectKey = BuildObjectKey(destinationKey);
+        if (string.Equals(sourceObjectKey, destinationObjectKey, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("The destination key must differ from the source key.", nameof(destinationKey));
+        }
+
+        var request = new CopyObjectRequest
+        {
+            SourceBucket = _options.BucketName,
+            SourceKey = sourceObjectKey,
+            SourceVersionId = sourceVersionId,
+            DestinationBucket = _options.BucketName,
+            DestinationKey = destinationObjectKey,
+            ContentType = contentType,
+            MetadataDirective = S3MetadataDirective.REPLACE
+        };
+        AddMetadata(request.Metadata, metadata);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (size > MaximumCopyPartSizeBytes)
+        {
+            return await CopyMultipartAsync(request, size, metadata, cancellationToken);
+        }
+
+        var response = await transferUtility.S3Client.CopyObjectAsync(request, cancellationToken);
+
+        return new FileCopyResult(response.VersionId);
+    }
+
     public Task DeleteAsync(
         string key,
         CancellationToken cancellationToken)
@@ -131,6 +180,20 @@ internal sealed class S3FileStorage(
         {
             BucketName = _options.BucketName,
             Key = BuildObjectKey(key)
+        }, cancellationToken);
+    }
+
+    public Task DeleteAsync(string key, string versionId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(versionId);
+        var objectKey = BuildObjectKey(key);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
+        {
+            BucketName = _options.BucketName,
+            Key = objectKey,
+            VersionId = versionId
         }, cancellationToken);
     }
 
@@ -184,6 +247,123 @@ internal sealed class S3FileStorage(
         return CreateDownloadUrlAsync(key, versionId, fileName, contentType, cancellationToken);
     }
 
+    private static void AddMetadata(
+        MetadataCollection destination,
+        IReadOnlyDictionary<string, string> metadata)
+    {
+        using var headers = new HttpRequestMessage();
+        foreach (var entry in metadata)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(entry.Key);
+            ArgumentNullException.ThrowIfNull(entry.Value);
+            if (entry.Key.StartsWith(MetadataHeaderPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("Metadata names must omit the x-amz-meta- prefix.", nameof(metadata));
+            }
+            if (destination[entry.Key] is not null)
+            {
+                throw new ArgumentException("Metadata names must be unique ignoring case.", nameof(metadata));
+            }
+
+            headers.Headers.Add(MetadataHeaderPrefix + entry.Key, entry.Value);
+            destination.Add(entry.Key, entry.Value);
+        }
+    }
+
+    private async Task<FileCopyResult> CopyMultipartAsync(
+        CopyObjectRequest request,
+        long size,
+        IReadOnlyDictionary<string, string> metadata,
+        CancellationToken cancellationToken)
+    {
+        var initiation = new InitiateMultipartUploadRequest
+        {
+            BucketName = request.DestinationBucket,
+            Key = request.DestinationKey,
+            ContentType = request.ContentType
+        };
+        AddMetadata(initiation.Metadata, metadata);
+        var initiated = await transferUtility.S3Client.InitiateMultipartUploadAsync(initiation, cancellationToken);
+        if (string.IsNullOrWhiteSpace(initiated.UploadId))
+        {
+            throw new InvalidDataException("S3 did not return a multipart upload identifier.");
+        }
+
+        try
+        {
+            var parts = await CopyPartsAsync(request, initiated.UploadId, size, cancellationToken);
+            var completed = await transferUtility.S3Client.CompleteMultipartUploadAsync(
+                new CompleteMultipartUploadRequest
+                {
+                    BucketName = request.DestinationBucket,
+                    Key = request.DestinationKey,
+                    UploadId = initiated.UploadId,
+                    PartETags = parts
+                }, cancellationToken);
+
+            return new FileCopyResult(completed.VersionId);
+        }
+        catch (Exception copyException)
+        {
+            using (var cleanupCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+            {
+                try
+                {
+                    await transferUtility.S3Client.AbortMultipartUploadAsync(
+                        new AbortMultipartUploadRequest
+                        {
+                            BucketName = request.DestinationBucket,
+                            Key = request.DestinationKey,
+                            UploadId = initiated.UploadId
+                        }, cleanupCancellation.Token);
+                }
+                catch (Exception cleanupException)
+                {
+                    throw new AggregateException(
+                        "Multipart copying and aborting its upload both failed.", copyException, cleanupException);
+                }
+            }
+
+            return await Task.FromException<FileCopyResult>(copyException);
+        }
+    }
+
+    private async Task<List<PartETag>> CopyPartsAsync(
+        CopyObjectRequest request,
+        string uploadId,
+        long size,
+        CancellationToken cancellationToken)
+    {
+        var partSize = Math.Max(MinimumCopyPartSizeBytes, ((size - 1) / MaximumCopyParts) + 1);
+        var parts = new List<PartETag>();
+        for (long offset = 0; offset < size; offset += partSize)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var partNumber = parts.Count + 1;
+            var copied = await transferUtility.S3Client.CopyPartAsync(
+                new CopyPartRequest
+                {
+                    SourceBucket = request.SourceBucket,
+                    SourceKey = request.SourceKey,
+                    SourceVersionId = request.SourceVersionId,
+                    DestinationBucket = request.DestinationBucket,
+                    DestinationKey = request.DestinationKey,
+                    UploadId = uploadId,
+                    PartNumber = partNumber,
+                    FirstByte = offset,
+                    LastByte = Math.Min(offset + partSize, size) - 1
+                }, cancellationToken);
+            if (string.IsNullOrWhiteSpace(copied.ETag))
+            {
+                throw new InvalidDataException("S3 did not return a copied part ETag.");
+            }
+
+            parts.Add(new PartETag(partNumber, copied.ETag));
+        }
+
+        return parts;
+    }
+
     private TransferUtilityUploadRequest CreateUploadRequest(
         string key,
         Stream content,
@@ -206,23 +386,7 @@ internal sealed class S3FileStorage(
             AutoCloseStream = false,
             AutoResetStreamPosition = false
         };
-        using var headers = new HttpRequestMessage();
-        foreach (var entry in metadata)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(entry.Key);
-            ArgumentNullException.ThrowIfNull(entry.Value);
-            if (entry.Key.StartsWith(MetadataHeaderPrefix, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException("Metadata names must omit the x-amz-meta- prefix.", nameof(metadata));
-            }
-            if (request.Metadata[entry.Key] is not null)
-            {
-                throw new ArgumentException("Metadata names must be unique ignoring case.", nameof(metadata));
-            }
-
-            headers.Headers.Add(MetadataHeaderPrefix + entry.Key, entry.Value);
-            request.Metadata.Add(entry.Key, entry.Value);
-        }
+        AddMetadata(request.Metadata, metadata);
 
         return request;
     }
