@@ -52,7 +52,6 @@ public sealed class S3FileStorageRelocationTests
     [InlineData("version")]
     [InlineData("type")]
     [InlineData("size")]
-    [InlineData("too-large")]
     [InlineData("metadata")]
     [InlineData("same-key")]
     [InlineData("prefixed-metadata")]
@@ -77,12 +76,31 @@ public sealed class S3FileStorageRelocationTests
             kind == "version" ? "" : "version-1",
             kind == "destination" ? "../target" : kind == "same-key" ? "source" : "target",
             kind == "type" ? "invalid" : "text/plain",
-            kind == "size" ? -1 : kind == "too-large" ? long.MaxValue : 4,
+            kind == "size" ? -1 : 4,
             metadata,
             TestContext.Current.CancellationToken));
 
         await _client.DidNotReceive().CopyObjectAsync(
             Arg.Any<CopyObjectRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory(DisplayName = "Copy rejects objects above the single-copy limit before contacting storage")]
+    [InlineData((5L * 1024 * 1024 * 1024) + 1)]
+    [InlineData(long.MaxValue)]
+    public async Task CopyAsync_Should_RejectSize_When_SingleCopyLimitIsExceeded(long size)
+    {
+        var storage = CreateStorage();
+        _client.ClearReceivedCalls();
+        _transfer.ClearReceivedCalls();
+
+        var failure = await Should.ThrowAsync<ArgumentOutOfRangeException>(() => storage.CopyAsync(
+            "source", "version-1", "target", "text/plain", size,
+            ReadOnlyDictionary<string, string>.Empty, TestContext.Current.CancellationToken));
+
+        failure.ParamName.ShouldBe("size");
+        failure.ActualValue.ShouldBe(size);
+        _client.ReceivedCalls().ShouldBeEmpty();
+        _transfer.ReceivedCalls().ShouldBeEmpty();
     }
 
     [Fact(DisplayName = "Copy metadata rejects malformed HTTP headers before storage requests")]

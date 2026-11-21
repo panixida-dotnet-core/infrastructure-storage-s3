@@ -23,9 +23,7 @@ internal sealed class S3FileStorage(
 {
     private const string NoSuchBucketErrorCode = "NoSuchBucket";
     private const string MetadataHeaderPrefix = "x-amz-meta-";
-    private const long MaximumCopyPartSizeBytes = 5L * 1024 * 1024 * 1024;
-    private const long MinimumCopyPartSizeBytes = 64L * 1024 * 1024;
-    private const int MaximumCopyParts = 10_000;
+    private const long MaximumCopySizeBytes = 5L * 1024 * 1024 * 1024;
 
     private readonly S3StorageOptions _options = options.Value;
 
@@ -138,10 +136,7 @@ internal sealed class S3FileStorage(
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceVersionId);
         ValidateContentType(contentType);
         ArgumentOutOfRangeException.ThrowIfNegative(size);
-        if (size > MaximumCopyPartSizeBytes * MaximumCopyParts)
-        {
-            throw new ArgumentOutOfRangeException(nameof(size), "The size exceeds S3 multipart copy limits.");
-        }
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(size, MaximumCopySizeBytes);
         ArgumentNullException.ThrowIfNull(metadata);
         var sourceObjectKey = BuildObjectKey(sourceKey);
         var destinationObjectKey = BuildObjectKey(destinationKey);
@@ -162,10 +157,6 @@ internal sealed class S3FileStorage(
         };
         AddMetadata(request.Metadata, metadata);
         cancellationToken.ThrowIfCancellationRequested();
-        if (size > MaximumCopyPartSizeBytes)
-        {
-            return await CopyMultipartAsync(request, size, metadata, cancellationToken);
-        }
 
         var response = await transferUtility.S3Client.CopyObjectAsync(request, cancellationToken);
 
@@ -268,100 +259,6 @@ internal sealed class S3FileStorage(
             headers.Headers.Add(MetadataHeaderPrefix + entry.Key, entry.Value);
             destination.Add(entry.Key, entry.Value);
         }
-    }
-
-    private async Task<FileCopyResult> CopyMultipartAsync(
-        CopyObjectRequest request,
-        long size,
-        IReadOnlyDictionary<string, string> metadata,
-        CancellationToken cancellationToken)
-    {
-        var initiation = new InitiateMultipartUploadRequest
-        {
-            BucketName = request.DestinationBucket,
-            Key = request.DestinationKey,
-            ContentType = request.ContentType
-        };
-        AddMetadata(initiation.Metadata, metadata);
-        var initiated = await transferUtility.S3Client.InitiateMultipartUploadAsync(initiation, cancellationToken);
-        if (string.IsNullOrWhiteSpace(initiated.UploadId))
-        {
-            throw new InvalidDataException("S3 did not return a multipart upload identifier.");
-        }
-
-        try
-        {
-            var parts = await CopyPartsAsync(request, initiated.UploadId, size, cancellationToken);
-            var completed = await transferUtility.S3Client.CompleteMultipartUploadAsync(
-                new CompleteMultipartUploadRequest
-                {
-                    BucketName = request.DestinationBucket,
-                    Key = request.DestinationKey,
-                    UploadId = initiated.UploadId,
-                    PartETags = parts
-                }, cancellationToken);
-
-            return new FileCopyResult(completed.VersionId);
-        }
-        catch (Exception copyException)
-        {
-            using (var cleanupCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
-            {
-                try
-                {
-                    await transferUtility.S3Client.AbortMultipartUploadAsync(
-                        new AbortMultipartUploadRequest
-                        {
-                            BucketName = request.DestinationBucket,
-                            Key = request.DestinationKey,
-                            UploadId = initiated.UploadId
-                        }, cleanupCancellation.Token);
-                }
-                catch (Exception cleanupException)
-                {
-                    throw new AggregateException(
-                        "Multipart copying and aborting its upload both failed.", copyException, cleanupException);
-                }
-            }
-
-            return await Task.FromException<FileCopyResult>(copyException);
-        }
-    }
-
-    private async Task<List<PartETag>> CopyPartsAsync(
-        CopyObjectRequest request,
-        string uploadId,
-        long size,
-        CancellationToken cancellationToken)
-    {
-        var partSize = Math.Max(MinimumCopyPartSizeBytes, ((size - 1) / MaximumCopyParts) + 1);
-        var parts = new List<PartETag>();
-        for (long offset = 0; offset < size; offset += partSize)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var partNumber = parts.Count + 1;
-            var copied = await transferUtility.S3Client.CopyPartAsync(
-                new CopyPartRequest
-                {
-                    SourceBucket = request.SourceBucket,
-                    SourceKey = request.SourceKey,
-                    SourceVersionId = request.SourceVersionId,
-                    DestinationBucket = request.DestinationBucket,
-                    DestinationKey = request.DestinationKey,
-                    UploadId = uploadId,
-                    PartNumber = partNumber,
-                    FirstByte = offset,
-                    LastByte = Math.Min(offset + partSize, size) - 1
-                }, cancellationToken);
-            if (string.IsNullOrWhiteSpace(copied.ETag))
-            {
-                throw new InvalidDataException("S3 did not return a copied part ETag.");
-            }
-
-            parts.Add(new PartETag(partNumber, copied.ETag));
-        }
-
-        return parts;
     }
 
     private TransferUtilityUploadRequest CreateUploadRequest(

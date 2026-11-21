@@ -148,11 +148,10 @@ Version listing needs `s3:ListBucketVersions`; historical reads need `s3:GetObje
 uses a server-side S3 CopyObject request for the exact source version and returns the destination version.
 Both keys use the configured bucket and prefix. Source content remains intact; caller metadata is replaced.
 The source and destination keys must differ. Supply the actual source version size in bytes.
-Copies up to 5 GiB use CopyObject; larger copies use sequential multipart copying with the same
-source version pinned on every part. Part sizes grow to stay within 10,000 parts, up to 5 GiB per part.
+Copies use CopyObject and support objects up to 5 GiB (5,368,709,120 bytes), inclusive.
+A larger size throws ArgumentOutOfRangeException for `size` before any storage request.
+Multipart copying is not currently supported.
 No source HEAD request or download is needed. Size does not resize or truncate the source.
-Failed or cancelled multipart copies attempt an abort with an independent 30-second cleanup token.
-If both copying and aborting fail, an AggregateException preserves both failures.
 
 `DeleteAsync(key, versionId, cancellationToken)` permanently removes only that version without a delete marker.
 Other versions remain available; deleting a current version can reveal an older version.
