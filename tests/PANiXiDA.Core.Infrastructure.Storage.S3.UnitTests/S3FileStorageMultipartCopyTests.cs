@@ -234,6 +234,28 @@ public sealed class S3FileStorageMultipartCopyTests
         }
     }
 
+    [Fact(DisplayName = "Multipart cleanup preserves the original copy failure stack trace")]
+    public async Task CopyAsync_Should_PreserveOriginalStack_When_CopyFails()
+    {
+        var storage = CreateStorage();
+        _client.CopyPartAsync(Arg.Any<CopyPartRequest>(), Arg.Any<CancellationToken>())
+            .Returns(_ => ThrowCopyFailure());
+
+        var failure = await Should.ThrowAsync<AmazonS3Exception>(() => storage.CopyAsync(
+            "source", "source-version", "target", "text/plain", SingleCopyLimit + 1,
+            ReadOnlyDictionary<string, string>.Empty, TestContext.Current.CancellationToken));
+
+        failure.StackTrace.ShouldNotBeNull();
+        failure.StackTrace.ShouldContain(nameof(ThrowCopyFailure));
+        await _client.Received(1).AbortMultipartUploadAsync(
+            Arg.Any<AbortMultipartUploadRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    private static Task<CopyPartResponse> ThrowCopyFailure()
+    {
+        throw new AmazonS3Exception("Original copy failure");
+    }
+
     private S3FileStorage CreateStorage()
     {
         _client.Config.Returns(new AmazonS3Config { RegionEndpoint = RegionEndpoint.USEast1 });

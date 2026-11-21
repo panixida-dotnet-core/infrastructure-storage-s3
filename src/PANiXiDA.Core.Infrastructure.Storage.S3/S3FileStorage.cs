@@ -324,7 +324,7 @@ internal sealed class S3FileStorage(
                 }
             }
 
-            throw;
+            return await Task.FromException<FileCopyResult>(copyException);
         }
     }
 
